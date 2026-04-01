@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const path = require("path");
 const { apiLimiter } = require("./middleware/rateLimiter");
+const { ipAllowlistMiddleware } = require("./middleware/ipAllowlist");
 const { validateSystemPrompt } = require("./middleware/systemPromptValidator");
 const { buildSystemPrompt } = require("./services/aiAssistant");
 
@@ -34,6 +35,9 @@ app.use(cors({
 
 // Body parsing
 app.use(express.json({ limit: "10kb" }));
+
+// IP allowlist — restrict access to county network ranges
+app.use(ipAllowlistMiddleware);
 
 // Rate limiting
 app.use("/api", apiLimiter);
