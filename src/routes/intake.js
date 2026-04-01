@@ -445,7 +445,8 @@ router.post("/start", async (req, res) => {
     const welcomeResponse = await sendMessage(
       [],
       systemPrompt,
-      `I'm here to apply for SNAP benefits. My name is ${displayName}.`
+      `I'm here to apply for SNAP benefits. My name is ${displayName}.`,
+      sessionToken
     );
 
     sessions.get(sessionToken).conversationHistory.push(
@@ -514,7 +515,8 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
     const aiResponse = await sendMessage(
       session.piiStripper.stripConversation(session.conversationHistory),
       session.systemPrompt,
-      strippedMessage
+      strippedMessage,
+      sessionToken
     );
 
     // Update conversation history

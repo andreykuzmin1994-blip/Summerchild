@@ -402,12 +402,13 @@ model ConversationLog {
 }
 
 model Caseworker {
-  id       String         @id @default(uuid())
-  countyId String         @map("county_id")
-  name     String
-  email    String         @unique
-  password String
-  role     CaseworkerRole @default(CASEWORKER)
+  id            String         @id @default(uuid())
+  countyId      String         @map("county_id")
+  name          String
+  email         String         @unique
+  password      String
+  role          CaseworkerRole @default(CASEWORKER)
+  deactivatedAt DateTime?      @map("deactivated_at")
 
   county   County         @relation(fields: [countyId], references: [id])
   intakes  Intake[]

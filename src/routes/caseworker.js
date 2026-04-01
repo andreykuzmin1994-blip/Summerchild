@@ -19,7 +19,7 @@ router.post("/login", authLimiter, async (req, res) => {
     }
 
     const caseworker = await prisma.caseworker.findUnique({ where: { email } });
-    if (!caseworker) {
+    if (!caseworker || caseworker.deactivatedAt) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -84,11 +84,34 @@ router.get("/dashboard", requireAuth, async (req, res) => {
     const weekAgo = new Date(today);
     weekAgo.setDate(weekAgo.getDate() - 7);
 
-    const [todayCount, weekCount, flaggedCount] = await Promise.all([
+    const completedWhere = { countyId: req.user.countyId, status: { in: ["COMPLETED", "REVIEWED"] } };
+
+    const [todayCount, weekCount, flaggedCount, totalCompleted] = await Promise.all([
       prisma.intake.count({ where: { countyId: req.user.countyId, createdAt: { gte: today } } }),
       prisma.intake.count({ where: { countyId: req.user.countyId, createdAt: { gte: weekAgo } } }),
       prisma.intake.count({ where: { countyId: req.user.countyId, riskScore: { in: ["MEDIUM", "HIGH"] } } }),
+      prisma.intake.count({ where: completedWhere }),
     ]);
+
+    // Average completion time (minutes) from created_at to updated_at for completed intakes
+    const completedIntakes = await prisma.intake.findMany({
+      where: completedWhere,
+      select: { createdAt: true, updatedAt: true },
+      take: 500,
+      orderBy: { createdAt: "desc" },
+    });
+    const avgCompletionTime = completedIntakes.length > 0
+      ? Math.round(completedIntakes.reduce((sum, i) =>
+          sum + (new Date(i.updatedAt) - new Date(i.createdAt)) / 60000, 0) / completedIntakes.length)
+      : 0;
+
+    // Flag rate: % of completed intakes with at least one flag (MEDIUM or HIGH risk)
+    const flaggedCompleted = await prisma.intake.count({
+      where: { ...completedWhere, riskScore: { in: ["MEDIUM", "HIGH"] } },
+    });
+    const flagRate = totalCompleted > 0
+      ? `${(flaggedCompleted / totalCompleted * 100).toFixed(1)}%`
+      : "0%";
 
     res.json({
       intakes,
@@ -96,6 +119,8 @@ router.get("/dashboard", requireAuth, async (req, res) => {
         intakesToday: todayCount,
         intakesThisWeek: weekCount,
         flaggedIntakes: flaggedCount,
+        avgCompletionTimeMinutes: avgCompletionTime,
+        flagRate,
       },
     });
   } catch (error) {
@@ -276,13 +301,12 @@ router.post("/register", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async 
 router.get("/users", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async (req, res) => {
   try {
     const caseworkers = await prisma.caseworker.findMany({
-      where: { countyId: req.user.countyId },
+      where: { countyId: req.user.countyId, deactivatedAt: null },
       select: {
         id: true,
         name: true,
         email: true,
         role: true,
-        createdAt: true,
         _count: { select: { reviews: true, intakes: true } },
       },
       orderBy: { name: "asc" },
@@ -391,7 +415,10 @@ router.delete("/users/:id", requireAuth, requireRole("ADMIN"), async (req, res) 
       return res.status(404).json({ error: "User not found" });
     }
 
-    await prisma.caseworker.delete({ where: { id: req.params.id } });
+    await prisma.caseworker.update({
+      where: { id: req.params.id },
+      data: { deactivatedAt: new Date() },
+    });
 
     await logAuditEvent({
       type: EVENTS.ADMIN_USER_DEACTIVATED,
