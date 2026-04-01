@@ -167,18 +167,18 @@ export default function IntakeDetail() {
           {intake.applicant && (
             <div className="text-sm py-1">
               <span className="font-medium">Applicant:</span>{" "}
-              {intake.applicant.firstName} {intake.applicant.lastName}
-              {intake.applicant.dob && `, DOB ${formatDate(intake.applicant.dob)}`}
+              {intake.applicant.displayName}
+              {intake.applicant.ageRange && `, Age range: ${intake.applicant.ageRange}`}
               , Head of Household
             </div>
           )}
           {intake.householdMembers?.map((m) => (
             <div key={m.id} className="text-sm py-1">
-              {m.firstName} {m.lastName}
-              {m.dob && `, DOB ${formatDate(m.dob)}`}
+              {m.displayName}
+              {m.ageRange && `, Age range: ${m.ageRange}`}
               , {m.relationshipToApplicant}
               {m.inSnapHousehold ? " \u2014 in SNAP household" : " \u2014 NOT in SNAP household"}
-              {m.isElderly && ` (elderly${m.dob ? `, age ${calculateAge(m.dob)}` : ""})`}
+              {m.isElderly && " (elderly)"}
               {m.isDisabled && " (disabled)"}
             </div>
           ))}
@@ -192,8 +192,8 @@ export default function IntakeDetail() {
                 <div key={s.id} className="text-sm py-1">
                   <span className="font-medium">
                     {s.householdMember
-                      ? `${s.householdMember.firstName} ${s.householdMember.lastName}`
-                      : intake.applicant ? `${intake.applicant.firstName} ${intake.applicant.lastName}` : "Applicant"}
+                      ? s.householdMember.displayName
+                      : intake.applicant ? intake.applicant.displayName : "Applicant"}
                   </span>
                   {" \u2014 "}
                   {s.employerOrPayerName || formatIncomeType(s.incomeType)}
@@ -355,6 +355,50 @@ export default function IntakeDetail() {
           </Section>
         )}
 
+        {/* Shelter Expense */}
+        {intake.shelterExpense && (
+          <Section title="SHELTER EXPENSE">
+            <div className="space-y-1 text-sm">
+              {intake.shelterExpense.shelterType && (
+                <div className="flex justify-between py-0.5">
+                  <span className="text-gray-600">Shelter type</span>
+                  <span className="text-gray-800">{intake.shelterExpense.shelterType}</span>
+                </div>
+              )}
+              {intake.shelterExpense.monthlyAmount != null && (
+                <div className="flex justify-between py-0.5">
+                  <span className="text-gray-600">Monthly amount</span>
+                  <span className="text-gray-800">${fmtCurrency(intake.shelterExpense.monthlyAmount)}</span>
+                </div>
+              )}
+              {intake.shelterExpense.standardUtilityAllowance != null && (
+                <div className="flex justify-between py-0.5">
+                  <span className="text-gray-600">Standard Utility Allowance</span>
+                  <span className="text-gray-800">${fmtCurrency(intake.shelterExpense.standardUtilityAllowance)}</span>
+                </div>
+              )}
+              <div className="mt-2 pt-2 border-t border-gray-200 flex justify-between font-medium">
+                <span>Total Shelter Cost</span>
+                <span>${fmtCurrency(intake.shelterExpense.totalShelterCost || 0)}</span>
+              </div>
+            </div>
+          </Section>
+        )}
+
+        {/* Conversation Log — audit trail (supervisor+ only, filtered server-side) */}
+        {intake.conversationLogs?.length > 0 && (
+          <Section title="CONVERSATION LOG">
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {intake.conversationLogs.map((log, i) => (
+                <div key={i} className={`text-sm p-2 rounded ${log.role === "USER" ? "bg-blue-50" : "bg-gray-50"}`}>
+                  <span className="font-medium text-xs text-gray-500 uppercase">{log.role}</span>
+                  <p className="text-gray-800 mt-0.5">{log.content}</p>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
         {/* Review form */}
         {intake.status === "COMPLETED" && (
           <div className="bg-white rounded-lg border border-gray-200 p-6 print:hidden">
@@ -367,26 +411,42 @@ export default function IntakeDetail() {
                   onChange={(e) => setReviewForm({ ...reviewForm, correctionsMade: e.target.checked })}
                   className="rounded"
                 />
-                {intake.shelterExpense.standardUtilityAllowance != null && (
-                  <Field label="Standard Utility Allowance" value={`$${Number(intake.shelterExpense.standardUtilityAllowance).toFixed(2)}`} />
-                )}
-              </div>
-              <div className="mt-2 pt-2 border-t border-gray-200 flex justify-between text-sm font-bold">
-                <span>Total Shelter Cost</span>
-                <span>${Number(intake.shelterExpense.totalShelterCost || 0).toFixed(2)}</span>
-              </div>
-            </Section>
-          )}
-
-          {/* Documents */}
-          {intake.documentChecklist?.length > 0 && (
-            <DocumentChecklist items={intake.documentChecklist} />
-          )}
-
-          {/* Conversation Log — audit trail */}
-          {intake.conversationLogs?.length > 0 && (
-            <ConversationLog logs={intake.conversationLogs} intakeId={intake.id} />
-          )}
+                <span className="text-sm text-gray-700">Corrections were needed</span>
+              </label>
+              {reviewForm.correctionsMade && (
+                <div className="space-y-2 ml-6">
+                  <select
+                    value={reviewForm.correctionType}
+                    onChange={(e) => setReviewForm({ ...reviewForm, correctionType: e.target.value })}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                  >
+                    <option value="">Select correction type...</option>
+                    <option value="INCOME">Income correction</option>
+                    <option value="HOUSEHOLD">Household composition</option>
+                    <option value="SHELTER">Shelter/expenses</option>
+                    <option value="DEDUCTIONS">Deductions</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+              )}
+              <textarea
+                value={reviewForm.notes}
+                onChange={(e) => setReviewForm({ ...reviewForm, notes: e.target.value })}
+                placeholder="Notes (optional)"
+                rows={3}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              />
+              {reviewError && <p className="text-red-600 text-sm">{reviewError}</p>}
+              <button
+                onClick={submitReview}
+                disabled={reviewing}
+                className="w-full bg-cushion-600 text-white rounded py-2 text-sm font-medium hover:bg-cushion-700 disabled:opacity-50 transition-colors"
+              >
+                {reviewing ? "Submitting..." : "Mark as Reviewed"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {intake.status === "REVIEWED" && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center print:hidden">
@@ -394,7 +454,7 @@ export default function IntakeDetail() {
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -407,18 +467,6 @@ function Section({ title, children }) {
   );
 }
 
-function formatDate(dateStr) {
-  return new Date(dateStr).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
-}
-
-function calculateAge(dob) {
-  const birth = new Date(dob);
-  const now = new Date();
-  let age = now.getFullYear() - birth.getFullYear();
-  const monthDiff = now.getMonth() - birth.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) age--;
-  return age;
-}
 
 function fmtCurrency(val) {
   if (val == null) return "0.00";

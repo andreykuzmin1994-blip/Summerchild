@@ -203,7 +203,7 @@ export default function SupervisorDashboard() {
                               )}
                               <span className="font-medium text-gray-800">
                                 {intake.applicant
-                                  ? `${intake.applicant.firstName} ${intake.applicant.lastName}`
+                                  ? intake.applicant.displayName
                                   : `#${intake.id.slice(0, 8)}`}
                               </span>
                             </div>
