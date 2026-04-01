@@ -104,7 +104,7 @@ export default function IntakeDetail() {
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto p-6 space-y-5">
+      <main className="max-w-4xl mx-auto p-6 space-y-5">
         {/* Risk Score + Expedited status bar */}
         <div className="flex items-center justify-between bg-white rounded-lg border border-gray-200 p-4">
           <div className="flex items-center space-x-4">
@@ -297,7 +297,7 @@ export default function IntakeDetail() {
             <div className="space-y-1.5">
               {intake.documentChecklist.map((doc, i) => (
                 <div key={i} className="flex items-start space-x-2 text-sm">
-                  <span className={`mt-0.5 ${doc.required ? "text-gray-800" : "text-gray-400"}`}>
+                  <span className={`mt-0.5 ${doc.required ? "text-gray-800" : "text-gray-500"}`} aria-hidden="true">
                     {doc.applicantConfirmedHas ? "\u2611" : "\u2610"}
                   </span>
                   <div>
@@ -415,7 +415,9 @@ export default function IntakeDetail() {
               </label>
               {reviewForm.correctionsMade && (
                 <div className="space-y-2 ml-6">
+                  <label htmlFor="correctionType" className="sr-only">Correction type</label>
                   <select
+                    id="correctionType"
                     value={reviewForm.correctionType}
                     onChange={(e) => setReviewForm({ ...reviewForm, correctionType: e.target.value })}
                     className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
@@ -429,7 +431,9 @@ export default function IntakeDetail() {
                   </select>
                 </div>
               )}
+              <label htmlFor="reviewNotes" className="sr-only">Review notes</label>
               <textarea
+                id="reviewNotes"
                 value={reviewForm.notes}
                 onChange={(e) => setReviewForm({ ...reviewForm, notes: e.target.value })}
                 placeholder="Notes (optional)"
@@ -449,21 +453,21 @@ export default function IntakeDetail() {
         )}
 
         {intake.status === "REVIEWED" && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center print:hidden">
-            <p className="text-green-800 font-medium">{"\u2713"} This intake has been reviewed</p>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center print:hidden" role="status">
+            <p className="text-green-800 font-medium"><span aria-hidden="true">{"\u2713"}</span> This intake has been reviewed</p>
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
 
 function Section({ title, children }) {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
+    <section className="bg-white rounded-lg border border-gray-200 p-4" aria-label={title}>
       <h2 className="font-bold text-gray-700 mb-3 text-sm uppercase tracking-wide">{title}</h2>
       <div>{children}</div>
-    </div>
+    </section>
   );
 }
 

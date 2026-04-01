@@ -69,6 +69,7 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
         role="log"
         aria-label="Conversation with intake assistant"
         aria-live="polite"
+        aria-atomic="false"
       >
         {messages.map((msg, i) => (
           <div
@@ -114,9 +115,9 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
       {/* Input area */}
       <div className="border-t border-gray-200 p-3 sm:p-4">
         <div className="flex items-center space-x-2">
-          <label htmlFor="chat-input" className="sr-only">Type your answer</label>
+          <label htmlFor="chatInput" className="sr-only">Type your answer</label>
           <input
-            id="chat-input"
+            id="chatInput"
             ref={inputRef}
             type="text"
             value={input}
@@ -125,13 +126,14 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
             placeholder="Type your answer..."
             className="flex-1 border border-gray-300 rounded-full px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:border-transparent"
             disabled={isLoading}
+            aria-busy={isLoading}
             aria-describedby="chat-help"
             autoComplete="off"
           />
           <button
             onClick={() => handleSend()}
             disabled={isLoading || !input.trim()}
-            className="bg-cushion-600 text-white rounded-full px-4 sm:px-5 py-2 text-sm font-medium hover:bg-cushion-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:ring-offset-2"
+            className="bg-cushion-600 text-white rounded-full px-4 sm:px-5 py-3 text-sm font-medium hover:bg-cushion-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:ring-offset-2"
             aria-label="Send message"
           >
             Send

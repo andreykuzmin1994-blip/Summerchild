@@ -51,7 +51,6 @@ export default function SessionTimeoutWarning({ lastActivity, onExpired }) {
           <button
             onClick={() => window.location.reload()}
             className="w-full bg-cushion-600 text-white rounded-lg py-3 font-medium hover:bg-cushion-700 transition-colors focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:ring-offset-2"
-            autoFocus
           >
             Start New Intake
           </button>
