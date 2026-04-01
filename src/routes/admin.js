@@ -80,8 +80,8 @@ router.get("/audit-log", requireAuth, requireRole("ADMIN"), async (req, res) => 
     const logs = await prisma.auditLog.findMany({
       where,
       orderBy: { timestamp: "desc" },
-      take: parseInt(limit),
-      skip: parseInt(offset),
+      take: Math.min(parseInt(limit) || 100, 1000),
+      skip: parseInt(offset) || 0,
     });
 
     const total = await prisma.auditLog.count({ where });
