@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ChatInterface from "../components/ChatInterface";
 import ProgressBar from "../components/ProgressBar";
 import ReviewSummary from "../components/ReviewSummary";
@@ -32,6 +32,10 @@ export default function IntakePage() {
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
   const [queueNumber, setQueueNumber] = useState(null);
+
+  useEffect(() => {
+    document.documentElement.lang = language || "en";
+  }, [language]);
 
   const handleSessionExpired = useCallback(() => {
     setSessionExpired(true);
@@ -213,22 +217,21 @@ export default function IntakePage() {
             <ErrorBanner message={error} onRetry={() => setError(null)} />
 
             <div className="space-y-3">
-              <label htmlFor="displayName" className="sr-only">
+              <label htmlFor="displayNameInput" className="sr-only">
                 {language === "es" ? "Nombre y primera letra del apellido" : "First name and last initial"}
               </label>
               <input
-                id="displayName"
+                id="displayNameInput"
                 type="text"
                 value={displayName}
                 onChange={(e) => { setDisplayName(e.target.value); setNameError(""); }}
                 placeholder={language === "es" ? "Maria G." : "Maria G."}
                 className="w-full border-2 border-gray-300 rounded-lg py-3 px-4 text-lg text-center focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:border-cushion-500"
-                aria-describedby={nameError ? "name-error" : undefined}
+                aria-describedby={nameError ? "nameError" : undefined}
                 aria-invalid={nameError ? "true" : "false"}
-                autoFocus
               />
               {nameError && (
-                <p id="name-error" role="alert" className="text-red-600 text-sm">
+                <p id="nameError" role="alert" className="text-red-600 text-sm">
                   {nameError}
                 </p>
               )}
@@ -253,8 +256,8 @@ export default function IntakePage() {
     return (
       <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex items-center justify-center p-4">
         <main id="main-content" className="max-w-md w-full text-center space-y-6" role="main">
-          <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto" aria-hidden="true">
-            <span className="text-white text-4xl">{"\u2713"}</span>
+          <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto" role="img" aria-label="Success">
+            <span className="text-white text-4xl" aria-hidden="true">{"\u2713"}</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-800">Thank You</h1>
           <p className="text-gray-600">
@@ -326,7 +329,7 @@ export default function IntakePage() {
   // Chat screen
   return (
     <>
-      <SkipLink />
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <SessionTimeoutWarning lastActivity={lastActivity} onExpired={handleSessionExpired} />
       <div className="h-screen flex flex-col bg-white">
         <ProgressBar currentSection={section} />

@@ -55,29 +55,29 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-sm border p-6 space-y-4" aria-label="Sign in form">
             {error && (
-              <div className="bg-red-50 text-red-700 text-sm rounded-lg p-3" role="alert" aria-live="polite">{error}</div>
+              <div id="loginError" className="bg-red-50 text-red-700 text-sm rounded-lg p-3" role="alert" aria-live="polite">{error}</div>
             )}
             <div>
-              <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <label htmlFor="emailInput" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
               <input
-                id="login-email"
+                id="emailInput"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500"
+                className="w-full border border-gray-300 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500"
                 required
                 autoComplete="email"
-                aria-describedby={error ? "login-error" : undefined}
+                aria-describedby={error ? "loginError" : undefined}
               />
             </div>
             <div>
-              <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <label htmlFor="passwordInput" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
               <input
-                id="login-password"
+                id="passwordInput"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500"
+                className="w-full border border-gray-300 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500"
                 required
                 autoComplete="current-password"
               />

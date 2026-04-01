@@ -7,13 +7,10 @@ export default function DocumentChecklist({ items }) {
       <p className="text-xs text-gray-600 mb-3">
         Please bring the following documents to your interview:
       </p>
-      <ul className="space-y-2" role="list">
+      <ul className="space-y-2">
         {items.map((item, i) => (
           <li key={i} className="flex items-start space-x-2">
-            <span
-              className={`mt-0.5 ${item.required ? "text-red-500" : "text-gray-400"}`}
-              aria-hidden="true"
-            >
+            <span className={`mt-0.5 ${item.required ? "text-red-500" : "text-gray-500"}`} aria-hidden="true">
               {item.applicantConfirmedHas ? "\u2611" : "\u2610"}
             </span>
             <div>

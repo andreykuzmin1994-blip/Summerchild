@@ -154,7 +154,7 @@ export default function CaseworkerDashboard() {
                           {intake.riskScore}
                         </span>
                       )}
-                      <span className="text-xs text-gray-400 hidden sm:inline">{intake.status}</span>
+                      <span className="text-xs text-gray-500 hidden sm:inline">{intake.status}</span>
                       <span className="text-gray-300" aria-hidden="true">{"\u203A"}</span>
                     </div>
                   </Link>

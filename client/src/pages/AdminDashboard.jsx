@@ -252,7 +252,7 @@ export default function AdminDashboard() {
 
         <main id="main-content" className="max-w-6xl mx-auto p-4 sm:p-6" role="main">
           {/* Tabs */}
-          <nav className="flex space-x-1 mb-6 border-b border-gray-200" role="tablist" aria-label="Admin sections">
+          <div className="flex space-x-1 mb-6 border-b border-gray-200" role="tablist" aria-label="Admin sections">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
@@ -268,7 +268,7 @@ export default function AdminDashboard() {
                 {tab.label}
               </button>
             ))}
-          </nav>
+          </div>
 
           <ErrorBanner message={error} onRetry={() => {
             if (activeTab === "stats") loadStats();
@@ -518,7 +518,6 @@ export default function AdminDashboard() {
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500"
                           required
                           minLength={8}
-                          autoFocus
                         />
                         <p className="text-xs text-gray-400 mt-1">Minimum 8 characters</p>
                       </div>
