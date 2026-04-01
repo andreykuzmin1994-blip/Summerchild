@@ -2,7 +2,9 @@
   "name": "cushion-gov",
   "version": "1.0.0",
   "description": "Cushion Gov — SNAP Payment Accuracy Platform for County DFCS Offices",
-  "prisma": { "seed": "npx tsx prisma/seed.ts" },
+  "prisma": {
+    "seed": "npx tsx prisma/seed.ts"
+  },
   "scripts": {
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
@@ -33,6 +35,6 @@
     "prisma": "^6.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.2.4"
   }
 }

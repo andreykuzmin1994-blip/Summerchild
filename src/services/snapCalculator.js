@@ -1,7 +1,5 @@
-const { PrismaClient } = require("@prisma/client");
+const prisma = require("../lib/prisma");
 const gaConfig = require("../config/ga-snap-deductions-fy2026.json");
-
-const prisma = new PrismaClient();
 
 // Pay frequency conversion factors to monthly
 const FREQUENCY_MULTIPLIERS = {
