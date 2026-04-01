@@ -23,6 +23,8 @@ export default function IntakeDetail() {
   const [loading, setLoading] = useState(true);
   const [reviewing, setReviewing] = useState(false);
   const [reviewForm, setReviewForm] = useState({ correctionsMade: false, correctionType: "", notes: "" });
+  const [error, setError] = useState(null);
+  const [reviewError, setReviewError] = useState(null);
 
   const token = localStorage.getItem("token");
 
@@ -32,30 +34,34 @@ export default function IntakeDetail() {
   }, [id]);
 
   const loadIntake = async () => {
+    setError(null);
     try {
       const res = await fetch(`/api/caseworker/intake/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) { navigate("/login"); return; }
+      if (!res.ok) throw new Error("Failed to load intake details. Please try again.");
       const data = await res.json();
       setIntake(data);
-    } catch (error) {
-      console.error("Failed to load intake:", error);
+    } catch (err) {
+      setError(err.message);
     }
     setLoading(false);
   };
 
   const submitReview = async () => {
     setReviewing(true);
+    setReviewError(null);
     try {
-      await fetch(`/api/caseworker/intake/${id}/review`, {
+      const res = await fetch(`/api/caseworker/intake/${id}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(reviewForm),
       });
+      if (!res.ok) throw new Error("Failed to submit review. Please try again.");
       loadIntake();
-    } catch (error) {
-      console.error("Failed to submit review:", error);
+    } catch (err) {
+      setReviewError(err.message);
     }
     setReviewing(false);
   };
@@ -361,40 +367,26 @@ export default function IntakeDetail() {
                   onChange={(e) => setReviewForm({ ...reviewForm, correctionsMade: e.target.checked })}
                   className="rounded"
                 />
-                <span className="text-sm">Corrections were needed</span>
-              </label>
+                {intake.shelterExpense.standardUtilityAllowance != null && (
+                  <Field label="Standard Utility Allowance" value={`$${Number(intake.shelterExpense.standardUtilityAllowance).toFixed(2)}`} />
+                )}
+              </div>
+              <div className="mt-2 pt-2 border-t border-gray-200 flex justify-between text-sm font-bold">
+                <span>Total Shelter Cost</span>
+                <span>${Number(intake.shelterExpense.totalShelterCost || 0).toFixed(2)}</span>
+              </div>
+            </Section>
+          )}
 
-              {reviewForm.correctionsMade && (
-                <select
-                  value={reviewForm.correctionType}
-                  onChange={(e) => setReviewForm({ ...reviewForm, correctionType: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="">Select correction type</option>
-                  <option value="INCOME">Income</option>
-                  <option value="HOUSEHOLD">Household</option>
-                  <option value="DEDUCTION">Deduction</option>
-                  <option value="OTHER">Other</option>
-                </select>
-              )}
+          {/* Documents */}
+          {intake.documentChecklist?.length > 0 && (
+            <DocumentChecklist items={intake.documentChecklist} />
+          )}
 
-              <textarea
-                value={reviewForm.notes}
-                onChange={(e) => setReviewForm({ ...reviewForm, notes: e.target.value })}
-                placeholder="Notes (optional)"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-20"
-              />
-
-              <button
-                onClick={submitReview}
-                disabled={reviewing}
-                className="bg-green-600 text-white rounded-lg px-6 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
-              >
-                {reviewing ? "Submitting..." : "Mark as Reviewed"}
-              </button>
-            </div>
-          </div>
-        )}
+          {/* Conversation Log — audit trail */}
+          {intake.conversationLogs?.length > 0 && (
+            <ConversationLog logs={intake.conversationLogs} intakeId={intake.id} />
+          )}
 
         {intake.status === "REVIEWED" && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center print:hidden">
@@ -402,7 +394,7 @@ export default function IntakeDetail() {
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }
 

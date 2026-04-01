@@ -269,4 +269,144 @@ router.post("/register", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async 
   }
 });
 
+/**
+ * GET /api/caseworker/users
+ * List all caseworkers for the county (admin/supervisor only).
+ */
+router.get("/users", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async (req, res) => {
+  try {
+    const caseworkers = await prisma.caseworker.findMany({
+      where: { countyId: req.user.countyId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        _count: { select: { reviews: true, intakes: true } },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    res.json(caseworkers);
+  } catch (error) {
+    console.error("[LIST USERS]", error);
+    res.status(500).json({ error: "Failed to load users" });
+  }
+});
+
+/**
+ * PUT /api/caseworker/users/:id
+ * Update a caseworker's role (admin only).
+ */
+router.put("/users/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!role || !["CASEWORKER", "SUPERVISOR", "ADMIN"].includes(role)) {
+      return res.status(400).json({ error: "Valid role is required" });
+    }
+
+    const target = await prisma.caseworker.findFirst({
+      where: { id: req.params.id, countyId: req.user.countyId },
+    });
+    if (!target) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const updated = await prisma.caseworker.update({
+      where: { id: req.params.id },
+      data: { role },
+    });
+
+    await logAuditEvent({
+      type: EVENTS.ADMIN_USER_MODIFIED,
+      actorType: ACTORS.ADMIN,
+      actorId: req.user.id,
+      countyId: req.user.countyId,
+      ip: req.ip,
+      details: { targetUserId: target.id, oldRole: target.role, newRole: role },
+    });
+
+    res.json({ id: updated.id, name: updated.name, email: updated.email, role: updated.role });
+  } catch (error) {
+    console.error("[UPDATE USER]", error);
+    res.status(500).json({ error: "Failed to update user" });
+  }
+});
+
+/**
+ * POST /api/caseworker/users/:id/reset-password
+ * Admin resets a caseworker's password.
+ */
+router.post("/users/:id/reset-password", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  try {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({ error: "Password must be at least 8 characters" });
+    }
+
+    const target = await prisma.caseworker.findFirst({
+      where: { id: req.params.id, countyId: req.user.countyId },
+    });
+    if (!target) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const hashed = await hashPassword(newPassword);
+    await prisma.caseworker.update({
+      where: { id: req.params.id },
+      data: { password: hashed },
+    });
+
+    await logAuditEvent({
+      type: EVENTS.ADMIN_USER_MODIFIED,
+      actorType: ACTORS.ADMIN,
+      actorId: req.user.id,
+      countyId: req.user.countyId,
+      ip: req.ip,
+      details: { targetUserId: target.id, action: "password_reset" },
+    });
+
+    res.json({ message: "Password reset successfully" });
+  } catch (error) {
+    console.error("[RESET PASSWORD]", error);
+    res.status(500).json({ error: "Failed to reset password" });
+  }
+});
+
+/**
+ * DELETE /api/caseworker/users/:id
+ * Deactivate a caseworker (admin only). Soft-delete approach.
+ */
+router.delete("/users/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: "Cannot deactivate your own account" });
+    }
+
+    const target = await prisma.caseworker.findFirst({
+      where: { id: req.params.id, countyId: req.user.countyId },
+    });
+    if (!target) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    await prisma.caseworker.delete({ where: { id: req.params.id } });
+
+    await logAuditEvent({
+      type: EVENTS.ADMIN_USER_DEACTIVATED,
+      actorType: ACTORS.ADMIN,
+      actorId: req.user.id,
+      countyId: req.user.countyId,
+      ip: req.ip,
+      details: { targetUserId: target.id, targetEmail: target.email },
+    });
+
+    res.json({ message: "User deactivated" });
+  } catch (error) {
+    console.error("[DEACTIVATE USER]", error);
+    res.status(500).json({ error: "Failed to deactivate user" });
+  }
+});
+
 module.exports = router;
