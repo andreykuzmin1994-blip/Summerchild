@@ -191,14 +191,6 @@ enum RiskScore {
   HIGH
 }
 
-enum CitizenshipStatus {
-  US_CITIZEN
-  PERMANENT_RESIDENT
-  QUALIFIED_ALIEN
-  OTHER
-  UNDISCLOSED
-}
-
 enum IncomeType {
   EMPLOYMENT
   SELF_EMPLOYMENT
@@ -277,6 +269,7 @@ model Intake {
   status           IntakeStatus @default(IN_PROGRESS)
   countyId         String       @map("county_id")
   sessionToken     String       @unique @map("session_token")
+  queueNumber      String       @map("queue_number")  // e.g., "A-0247" — lobby call number
   riskScore        RiskScore?   @map("risk_score")
   expeditedFlag    Boolean      @default(false) @map("expedited_flag")
   expeditedReason  String?      @map("expedited_reason")
@@ -303,17 +296,7 @@ model Intake {
 model Applicant {
   id                  String            @id @default(uuid())
   intakeId            String            @unique @map("intake_id")
-  firstName           String            @map("first_name")
-  lastName            String            @map("last_name")
-  dob                 DateTime?
-  ssnLastFour         String?           @map("ssn_last_four") @db.VarChar(4)
-  addressStreet       String?           @map("address_street")
-  addressCity         String?           @map("address_city")
-  addressState        String?           @map("address_state") @db.VarChar(2)
-  addressZip          String?           @map("address_zip") @db.VarChar(5)
-  phone               String?
-  email               String?
-  citizenshipStatus   CitizenshipStatus? @map("citizenship_status")
+  displayName         String            @map("display_name")  // e.g., "Maria G." — first name + last initial only
   languagePreference  String            @default("en") @map("language_preference")
   isHeadOfHousehold   Boolean           @default(true) @map("is_head_of_household")
 
@@ -325,9 +308,8 @@ model Applicant {
 model HouseholdMember {
   id                          String   @id @default(uuid())
   intakeId                    String   @map("intake_id")
-  firstName                   String   @map("first_name")
-  lastName                    String   @map("last_name")
-  dob                         DateTime?
+  displayName                 String   @map("display_name")  // e.g., "Member 1" or "James R."
+  ageRange                    String?  @map("age_range")     // e.g., "30-39", "60+" — no exact DOB
   relationshipToApplicant     String   @map("relationship_to_applicant")
   purchasesAndPreparesTogether Boolean @default(true) @map("purchases_and_prepares_together")
   inSnapHousehold             Boolean  @default(true) @map("in_snap_household")

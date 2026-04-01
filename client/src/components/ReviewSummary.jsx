@@ -13,11 +13,8 @@ export default function ReviewSummary({ summary, onConfirm, onEdit }) {
       {/* Applicant Info */}
       {intake?.applicant && (
         <Section title="Your Information">
-          <Field label="Name" value={`${intake.applicant.firstName} ${intake.applicant.lastName}`} />
-          {intake.applicant.addressCity && (
-            <Field label="City" value={`${intake.applicant.addressCity}, ${intake.applicant.addressState}`} />
-          )}
-          {intake.applicant.phone && <Field label="Phone" value={intake.applicant.phone} />}
+          <Field label="Name" value={intake.applicant.displayName} />
+          {intake.queueNumber && <Field label="Queue Number" value={intake.queueNumber} />}
         </Section>
       )}
 
@@ -26,9 +23,10 @@ export default function ReviewSummary({ summary, onConfirm, onEdit }) {
         <Section title={`Household Members (${intake.householdMembers.length})`}>
           {intake.householdMembers.map((m) => (
             <div key={m.id} className="py-1">
-              <span className="font-medium">{m.firstName} {m.lastName}</span>
+              <span className="font-medium">{m.displayName}</span>
               <span className="text-gray-500 text-sm ml-2">
                 ({m.relationshipToApplicant}
+                {m.ageRange && `, age ${m.ageRange}`}
                 {m.isElderly && ", elderly"}
                 {m.isDisabled && ", disabled"})
               </span>

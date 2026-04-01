@@ -67,9 +67,9 @@ describe("consistencyChecker", () => {
         householdMembers: [
           {
             id: "m1",
-            firstName: "John",
-            lastName: "Doe",
-            dob: "1990-01-01",
+            displayName: "Member 1",
+            ageRange: "30-39",
+            relationshipToApplicant: "spouse",
             inSnapHousehold: true,
             hasEarnedIncome: false,
             hasUnearnedIncome: false,
@@ -81,7 +81,7 @@ describe("consistencyChecker", () => {
       expect(flags).toHaveLength(1);
       expect(flags[0].type).toBe("HOUSEHOLD_MEMBER_NO_INCOME");
       expect(flags[0].severity).toBe("MEDIUM");
-      expect(flags[0].member).toBe("John Doe");
+      expect(flags[0].member).toBe("Member 1");
     });
 
     it("does not flag minors (under 18)", () => {
@@ -89,9 +89,9 @@ describe("consistencyChecker", () => {
         householdMembers: [
           {
             id: "m1",
-            firstName: "Child",
-            lastName: "Doe",
-            dob: "2015-06-01",
+            displayName: "Member 1",
+            ageRange: "under 18",
+            relationshipToApplicant: "child",
             inSnapHousehold: true,
             hasEarnedIncome: false,
             hasUnearnedIncome: false,
@@ -108,9 +108,9 @@ describe("consistencyChecker", () => {
         householdMembers: [
           {
             id: "m1",
-            firstName: "Jane",
-            lastName: "Doe",
-            dob: "1985-03-15",
+            displayName: "Member 1",
+            ageRange: "30-39",
+            relationshipToApplicant: "spouse",
             inSnapHousehold: true,
             hasEarnedIncome: true,
             hasUnearnedIncome: false,
@@ -127,9 +127,9 @@ describe("consistencyChecker", () => {
         householdMembers: [
           {
             id: "m1",
-            firstName: "Senior",
-            lastName: "Doe",
-            dob: "1960-01-01",
+            displayName: "Member 1",
+            ageRange: "60+",
+            relationshipToApplicant: "parent",
             inSnapHousehold: true,
             hasEarnedIncome: false,
             hasUnearnedIncome: true,
@@ -146,9 +146,9 @@ describe("consistencyChecker", () => {
         householdMembers: [
           {
             id: "m1",
-            firstName: "Roommate",
-            lastName: "Smith",
-            dob: "1990-01-01",
+            displayName: "Member 1",
+            ageRange: "30-39",
+            relationshipToApplicant: "roommate",
             inSnapHousehold: false,
             hasEarnedIncome: false,
             hasUnearnedIncome: false,
@@ -165,9 +165,9 @@ describe("consistencyChecker", () => {
         householdMembers: [
           {
             id: "m1",
-            firstName: "Jane",
-            lastName: "Doe",
-            dob: "1990-01-01",
+            displayName: "Member 1",
+            ageRange: "30-39",
+            relationshipToApplicant: "spouse",
             inSnapHousehold: true,
             hasEarnedIncome: false,
             hasUnearnedIncome: false,
@@ -422,9 +422,9 @@ describe("consistencyChecker", () => {
         householdMembers: [
           {
             id: "m1",
-            firstName: "Jane",
-            lastName: "Doe",
-            dob: "1985-01-01",
+            displayName: "Member 1",
+            ageRange: "30-39",
+            relationshipToApplicant: "spouse",
             inSnapHousehold: true,
             hasEarnedIncome: false,
             hasUnearnedIncome: false,

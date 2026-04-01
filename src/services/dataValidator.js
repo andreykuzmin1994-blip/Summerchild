@@ -27,11 +27,11 @@ function validateIncomeEntry(entry) {
 function validateHouseholdMember(member) {
   const errors = [];
 
-  if (!member.first_name || member.first_name.length < 1) {
-    errors.push("Missing member name");
+  if (!member.display_name || member.display_name.length < 1) {
+    errors.push("Missing member display name");
   }
-  if (member.dob && new Date(member.dob) > new Date()) {
-    errors.push("Date of birth is in the future");
+  if (!member.relationship || member.relationship.length < 1) {
+    errors.push("Missing relationship to applicant");
   }
   if (typeof member.purchases_and_prepares_together !== "boolean") {
     errors.push("Purchase-and-prepare status not determined");
@@ -43,20 +43,8 @@ function validateHouseholdMember(member) {
 function validateApplicant(applicant) {
   const errors = [];
 
-  if (!applicant.first_name || applicant.first_name.length < 1) {
-    errors.push("Missing applicant first name");
-  }
-  if (!applicant.last_name || applicant.last_name.length < 1) {
-    errors.push("Missing applicant last name");
-  }
-  if (applicant.ssn_last_four && !/^\d{4}$/.test(applicant.ssn_last_four)) {
-    errors.push("SSN last four must be exactly 4 digits");
-  }
-  if (applicant.address_zip && !/^\d{5}$/.test(applicant.address_zip)) {
-    errors.push("ZIP code must be exactly 5 digits");
-  }
-  if (applicant.email && !/^[\w.-]+@[\w.-]+\.\w+$/.test(applicant.email)) {
-    errors.push("Invalid email format");
+  if (!applicant.display_name || applicant.display_name.length < 1) {
+    errors.push("Missing applicant display name");
   }
 
   return errors;
@@ -98,8 +86,8 @@ function validateExtractedData(dataBlock) {
       break;
     case "household_member":
       errors = validateHouseholdMember({
-        first_name: dataBlock.first_name,
-        dob: dataBlock.dob,
+        display_name: dataBlock.display_name,
+        relationship: dataBlock.relationship,
         purchases_and_prepares_together: dataBlock.purchases_and_prepares_together,
       });
       break;

@@ -123,15 +123,15 @@ export default function IntakeDetail() {
         <Section title={`HOUSEHOLD COMPOSITION (SNAP Household Size: ${(intake.householdMembers?.length || 0) + 1})`}>
           {intake.applicant && (
             <p className="text-sm">
-              <strong>Applicant:</strong> {intake.applicant.firstName} {intake.applicant.lastName}
-              {intake.applicant.dob && `, DOB ${new Date(intake.applicant.dob).toLocaleDateString()}`}
+              <strong>Applicant:</strong> {intake.applicant.displayName}
+              {" "}<span className="text-gray-400">({intake.queueNumber})</span>
               , Head of Household
             </p>
           )}
           {intake.householdMembers?.map((m) => (
             <p key={m.id} className="text-sm">
-              {m.firstName} {m.lastName}
-              {m.dob && `, DOB ${new Date(m.dob).toLocaleDateString()}`}
+              {m.displayName}
+              {m.ageRange && `, age ${m.ageRange}`}
               , {m.relationshipToApplicant}
               {m.inSnapHousehold ? " — in SNAP household" : " — NOT in SNAP household"}
               {m.isElderly && " (elderly)"}
@@ -145,7 +145,7 @@ export default function IntakeDetail() {
           {intake.incomeSources?.map((s) => (
             <p key={s.id} className="text-sm">
               {s.householdMember
-                ? `${s.householdMember.firstName} ${s.householdMember.lastName}`
+                ? s.householdMember.displayName
                 : "Applicant"}{" "}
               — {s.employerOrPayerName || s.incomeType}, {s.payFrequency.toLowerCase()} $
               {s.grossAmountPerPeriod.toFixed(2)} {"\u2192"} SNAP monthly: ${s.snapMonthlyAmount?.toFixed(2)}

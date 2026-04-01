@@ -68,7 +68,7 @@ router.get("/dashboard", requireAuth, async (req, res) => {
     const intakes = await prisma.intake.findMany({
       where,
       include: {
-        applicant: { select: { firstName: true, lastName: true } },
+        applicant: { select: { displayName: true } },
         _count: { select: { householdMembers: true } },
       },
       orderBy: [

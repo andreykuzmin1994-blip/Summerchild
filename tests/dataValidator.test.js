@@ -58,58 +58,45 @@ describe("dataValidator", () => {
   describe("validateHouseholdMember", () => {
     it("accepts valid member", () => {
       const errors = validateHouseholdMember({
-        first_name: "Jane",
-        dob: "1990-05-15",
+        display_name: "Member 1",
+        relationship: "spouse",
         purchases_and_prepares_together: true,
       });
       expect(errors).toHaveLength(0);
     });
 
-    it("rejects missing name", () => {
+    it("rejects missing display name", () => {
       const errors = validateHouseholdMember({
-        first_name: "",
+        display_name: "",
+        relationship: "spouse",
         purchases_and_prepares_together: true,
       });
-      expect(errors).toContain("Missing member name");
+      expect(errors).toContain("Missing member display name");
     });
 
-    it("rejects future DOB", () => {
+    it("rejects missing relationship", () => {
       const errors = validateHouseholdMember({
-        first_name: "Baby",
-        dob: "2099-01-01",
+        display_name: "Member 1",
+        relationship: "",
         purchases_and_prepares_together: true,
       });
-      expect(errors).toContain("Date of birth is in the future");
+      expect(errors).toContain("Missing relationship to applicant");
     });
   });
 
   describe("validateApplicant", () => {
     it("accepts valid applicant", () => {
       const errors = validateApplicant({
-        first_name: "John",
-        last_name: "Smith",
-        ssn_last_four: "1234",
-        address_zip: "30301",
+        display_name: "Maria G.",
       });
       expect(errors).toHaveLength(0);
     });
 
-    it("rejects invalid SSN last four", () => {
+    it("rejects missing display name", () => {
       const errors = validateApplicant({
-        first_name: "John",
-        last_name: "Smith",
-        ssn_last_four: "12",
+        display_name: "",
       });
-      expect(errors).toContain("SSN last four must be exactly 4 digits");
-    });
-
-    it("rejects invalid ZIP", () => {
-      const errors = validateApplicant({
-        first_name: "John",
-        last_name: "Smith",
-        address_zip: "123",
-      });
-      expect(errors).toContain("ZIP code must be exactly 5 digits");
+      expect(errors).toContain("Missing applicant display name");
     });
   });
 

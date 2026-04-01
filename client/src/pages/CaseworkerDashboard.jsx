@@ -119,9 +119,8 @@ export default function CaseworkerDashboard() {
                   )}
                   <div>
                     <p className="text-sm font-medium text-gray-800">
-                      {intake.applicant
-                        ? `${intake.applicant.firstName} ${intake.applicant.lastName}`
-                        : `Intake #${intake.id.slice(0, 8)}`}
+                      {intake.applicant?.displayName || "Unknown"}{" "}
+                      <span className="text-gray-400 font-normal">({intake.queueNumber})</span>
                     </p>
                     <p className="text-xs text-gray-500">
                       {new Date(intake.createdAt).toLocaleString()} | HH size: {(intake._count?.householdMembers || 0) + 1}

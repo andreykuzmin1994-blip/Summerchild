@@ -29,30 +29,61 @@ setInterval(() => {
 }, 60 * 1000); // Check every minute
 
 /**
+ * Generate a lobby queue number like "A-0247".
+ */
+function generateQueueNumber() {
+  const letter = String.fromCharCode(65 + Math.floor(Math.random() * 26)); // A-Z
+  const number = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+  return `${letter}-${number}`;
+}
+
+/**
  * POST /api/intake/start
- * Start a new intake session. Returns session token and welcome message.
+ * Start a new intake session. Returns session token, queue number, and welcome message.
+ * Expects: { countyId, language, displayName } where displayName is "FirstName L." format.
  */
 router.post("/start", async (req, res) => {
   try {
-    const { countyId, language } = req.body;
+    const { countyId, language, displayName } = req.body;
+
+    if (!displayName || displayName.length < 2) {
+      return res.status(400).json({ error: "Please provide your first name and last initial (e.g., 'Maria G.')" });
+    }
+
     const sessionToken = uuidv4();
+    const queueNumber = generateQueueNumber();
 
     const intake = await prisma.intake.create({
       data: {
         countyId: countyId || "dekalb-ga-001",
         sessionToken,
+        queueNumber,
         status: "IN_PROGRESS",
+      },
+    });
+
+    // Create minimal applicant record (display name only — no PII)
+    await prisma.applicant.create({
+      data: {
+        intakeId: intake.id,
+        displayName,
+        languagePreference: language || "en",
       },
     });
 
     // Build system prompt and cache it for this session
     const systemPrompt = await buildSystemPrompt("GA", 2026);
 
+    const piiStripper = new PIIStripper();
+    // Only mapping needed: the applicant's first name (for safety-net redaction)
+    const firstName = displayName.split(" ")[0];
+    if (firstName) piiStripper.addMapping(firstName, "[APPLICANT]");
+
     sessions.set(sessionToken, {
       intakeId: intake.id,
       systemPrompt,
       conversationHistory: [],
-      piiStripper: new PIIStripper(),
+      piiStripper,
       turnNumber: 0,
       language: language || "en",
       lastActivity: Date.now(),
@@ -67,15 +98,15 @@ router.post("/start", async (req, res) => {
       ip: req.ip,
     });
 
-    // Send initial welcome message
+    // Send initial welcome message with applicant's first name
     const welcomeResponse = await sendMessage(
       [],
       systemPrompt,
-      "I'm here to apply for SNAP benefits."
+      `I'm here to apply for SNAP benefits. My name is ${displayName}.`
     );
 
     sessions.get(sessionToken).conversationHistory.push(
-      { role: "user", content: "I'm here to apply for SNAP benefits." },
+      { role: "user", content: `I'm here to apply for SNAP benefits. My name is ${displayName}.` },
       { role: "assistant", content: welcomeResponse.rawMessage }
     );
     sessions.get(sessionToken).turnNumber = 1;
@@ -83,7 +114,7 @@ router.post("/start", async (req, res) => {
     // Log the conversation turn
     await prisma.conversationLog.createMany({
       data: [
-        { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: "Intake session started" },
+        { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: `Intake session started — ${displayName} (${queueNumber})` },
         { intakeId: intake.id, turnNumber: 1, role: "ASSISTANT", content: welcomeResponse.displayMessage },
       ],
     });
@@ -91,6 +122,7 @@ router.post("/start", async (req, res) => {
     res.json({
       sessionToken,
       intakeId: intake.id,
+      queueNumber,
       message: welcomeResponse.displayMessage,
       section: "WELCOME",
     });

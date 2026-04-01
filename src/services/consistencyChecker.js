@@ -63,8 +63,8 @@ function checkHouseholdIncomeGaps(intake) {
   for (const member of members) {
     if (!member.inSnapHousehold) continue;
 
-    const age = member.dob ? getAge(member.dob) : null;
-    if (age !== null && age < 18) continue;
+    // Skip minors based on age range (if available) or elderly/disabled flags
+    if (member.ageRange && member.ageRange.startsWith("0-") || member.ageRange === "under 18") continue;
 
     if (!member.hasEarnedIncome && !member.hasUnearnedIncome) {
       const incomeSources = (intake.incomeSources || []).filter(
@@ -75,8 +75,8 @@ function checkHouseholdIncomeGaps(intake) {
           type: "HOUSEHOLD_MEMBER_NO_INCOME",
           severity: "MEDIUM",
           field: "household",
-          member: `${member.firstName} ${member.lastName}`,
-          message: `${member.firstName} ${member.lastName} has no reported income — verify employment/benefits status`,
+          member: member.displayName,
+          message: `${member.displayName} (${member.relationshipToApplicant}) has no reported income — verify employment/benefits status`,
           suggestedAction: "Ask about SSI/SSDI/employment status",
         });
       }
@@ -214,17 +214,6 @@ function deriveRiskScore(flags) {
   if (hasHigh) return "HIGH";
   if (hasMedium) return "MEDIUM";
   return "LOW";
-}
-
-function getAge(dob) {
-  const today = new Date();
-  const birthDate = new Date(dob);
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const monthDiff = today.getMonth() - birthDate.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-    age--;
-  }
-  return age;
 }
 
 module.exports = {
