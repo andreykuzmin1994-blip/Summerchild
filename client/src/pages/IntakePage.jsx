@@ -113,7 +113,9 @@ export default function IntakePage() {
   const loadSummary = async () => {
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/${intakeId}/summary?sessionToken=${sessionToken}`);
+      const res = await fetch(`${API_BASE}/${intakeId}/summary`, {
+        headers: { "X-Session-Token": sessionToken },
+      });
       handleHttpError(res);
       const data = await res.json();
       setSummary(data);

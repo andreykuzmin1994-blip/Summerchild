@@ -8,6 +8,14 @@ const { calculateFullEligibility } = require("../services/snapCalculator");
 const prisma = new PrismaClient();
 const router = express.Router();
 
+function validatePasswordComplexity(password) {
+  if (!password || password.length < 8) return "Password must be at least 8 characters";
+  if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter";
+  if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter";
+  if (!/[0-9]/.test(password)) return "Password must contain at least one digit";
+  return null;
+}
+
 /**
  * POST /api/caseworker/login
  */
@@ -188,7 +196,13 @@ router.get("/intake/:id", requireAuth, async (req, res) => {
       ip: req.ip,
     });
 
-    res.json({ ...intake, eligibility, auditTrail });
+    // Restrict raw conversation logs to SUPERVISOR and ADMIN roles
+    const result = { ...intake, eligibility, auditTrail };
+    if (req.user.role === "CASEWORKER") {
+      result.conversationLogs = undefined;
+    }
+
+    res.json(result);
   } catch (error) {
     console.error("[INTAKE DETAIL]", error);
     res.status(500).json({ error: "Failed to load intake" });
@@ -255,6 +269,11 @@ router.post("/register", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async 
     const { name, email, password, role } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ error: "Name, email, and password are required" });
+    }
+
+    const passwordError = validatePasswordComplexity(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const existing = await prisma.caseworker.findUnique({ where: { email } });
@@ -365,8 +384,9 @@ router.put("/users/:id", requireAuth, requireRole("ADMIN"), async (req, res) => 
 router.post("/users/:id/reset-password", requireAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 8) {
-      return res.status(400).json({ error: "Password must be at least 8 characters" });
+    const passwordError = validatePasswordComplexity(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const target = await prisma.caseworker.findFirst({

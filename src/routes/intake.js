@@ -586,7 +586,7 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
 router.get("/:id/summary", async (req, res) => {
   try {
     const { id } = req.params;
-    const { sessionToken } = req.query;
+    const sessionToken = req.headers["x-session-token"] || req.query.sessionToken;
 
     const intake = await prisma.intake.findFirst({
       where: { id, ...(sessionToken ? { sessionToken } : {}) },

@@ -89,10 +89,12 @@ export default function CaseworkerDashboard() {
           <ErrorBanner message={error} onRetry={loadDashboard} />
 
           {/* Stats */}
-          <section className="grid grid-cols-3 gap-3 sm:gap-4 mb-6" aria-label="Quick statistics">
+          <section className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4 mb-6" aria-label="Quick statistics">
             <StatCard label="Today" value={stats.intakesToday || 0} />
             <StatCard label="This Week" value={stats.intakesThisWeek || 0} />
             <StatCard label="Flagged" value={stats.flaggedIntakes || 0} color="text-red-600" />
+            <StatCard label="Avg Time" value={stats.avgCompletionTimeMinutes ? `${stats.avgCompletionTimeMinutes}m` : "—"} />
+            <StatCard label="Flag Rate" value={stats.flagRate || "0%"} />
           </section>
 
           {/* Filters */}
@@ -127,7 +129,7 @@ export default function CaseworkerDashboard() {
                     key={intake.id}
                     to={`/caseworker/intake/${intake.id}`}
                     className="flex items-center justify-between px-3 sm:px-4 py-3 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-cushion-500"
-                    aria-label={`${intake.applicant ? `${intake.applicant.firstName} ${intake.applicant.lastName}` : `Intake ${intake.id.slice(0, 8)}`}, ${intake.riskScore || "no"} risk${intake.expeditedFlag ? ", expedited" : ""}`}
+                    aria-label={`${intake.applicant ? `${intake.applicant.displayName}` : `Intake ${intake.id.slice(0, 8)}`}, ${intake.riskScore || "no"} risk${intake.expeditedFlag ? ", expedited" : ""}`}
                   >
                     <div className="flex items-center space-x-3 min-w-0">
                       {intake.expeditedFlag && (
@@ -138,7 +140,7 @@ export default function CaseworkerDashboard() {
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">
                           {intake.applicant
-                            ? `${intake.applicant.firstName} ${intake.applicant.lastName}`
+                            ? `${intake.applicant.displayName}`
                             : `Intake #${intake.id.slice(0, 8)}`}
                         </p>
                         <p className="text-xs text-gray-500">
