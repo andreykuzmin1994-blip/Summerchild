@@ -99,17 +99,17 @@ export default function ReviewSummary({ summary, onConfirm, onEdit }) {
 
 function Section({ title, children }) {
   return (
-    <div className="border border-gray-200 rounded-lg p-4">
+    <section className="border border-gray-200 rounded-lg p-4" aria-label={title}>
       <h3 className="font-semibold text-gray-700 mb-2">{title}</h3>
       <div className="space-y-1">{children}</div>
-    </div>
+    </section>
   );
 }
 
 function Field({ label, value }) {
   return (
     <div className="flex justify-between text-sm">
-      <span className="text-gray-500">{label}</span>
+      <span className="text-gray-600">{label}</span>
       <span className="text-gray-800">{value}</span>
     </div>
   );

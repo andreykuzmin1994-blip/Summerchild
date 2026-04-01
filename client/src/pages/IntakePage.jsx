@@ -20,6 +20,13 @@ export default function IntakePage() {
   const [nameStep, setNameStep] = useState(false);
   const [nameError, setNameError] = useState("");
 
+  // Update HTML lang attribute when language changes
+  useEffect(() => {
+    if (language) {
+      document.documentElement.lang = language;
+    }
+  }, [language]);
+
   // Start session after name + language collected
   const startSession = async (selectedLanguage) => {
     setLanguage(selectedLanguage);
@@ -29,7 +36,11 @@ export default function IntakePage() {
   const submitNameAndStart = async () => {
     const trimmed = displayName.trim();
     if (trimmed.length < 2) {
-      setNameError("Please enter your first name and last initial (e.g., Maria G.)");
+      setNameError(
+        language === "es"
+          ? "Por favor ingrese su nombre y la primera letra de su apellido (ej: Maria G.)"
+          : "Please enter your first name and last initial (e.g., Maria G.)"
+      );
       return;
     }
     setNameError("");
@@ -98,12 +109,11 @@ export default function IntakePage() {
 
   const handleConfirm = async () => {
     try {
-      const res = await fetch(`${API_BASE}/${intakeId}/complete`, {
+      await fetch(`${API_BASE}/${intakeId}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionToken }),
       });
-      const data = await res.json();
       setCompleted(true);
     } catch (error) {
       console.error("Failed to complete intake:", error);
@@ -114,7 +124,7 @@ export default function IntakePage() {
   if (!language || (!sessionToken && !nameStep)) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-cushion-50 to-white flex items-center justify-center p-4">
-        <div className="max-w-md w-full text-center space-y-8">
+        <main className="max-w-md w-full text-center space-y-8" id="main-content">
           <div>
             <h1 className="text-3xl font-bold text-cushion-800">Welcome to DFCS</h1>
             <p className="text-gray-600 mt-2">
@@ -122,26 +132,26 @@ export default function IntakePage() {
             </p>
           </div>
 
-          <div className="space-y-3">
-            <p className="text-sm text-gray-500">Select your language / Seleccione su idioma</p>
+          <div className="space-y-3" role="group" aria-label="Language selection">
+            <p className="text-sm text-gray-600">Select your language / Seleccione su idioma</p>
             <button
               onClick={() => startSession("en")}
-              className="w-full bg-cushion-600 text-white rounded-lg py-4 text-lg font-medium hover:bg-cushion-700 transition-colors"
+              className="w-full bg-cushion-600 text-white rounded-lg py-4 text-lg font-medium hover:bg-cushion-700 focus:ring-2 focus:ring-cushion-500 focus:outline-none transition-colors"
             >
               English
             </button>
             <button
               onClick={() => startSession("es")}
-              className="w-full border-2 border-cushion-600 text-cushion-700 rounded-lg py-4 text-lg font-medium hover:bg-cushion-50 transition-colors"
+              className="w-full border-2 border-cushion-600 text-cushion-700 rounded-lg py-4 text-lg font-medium hover:bg-cushion-50 focus:ring-2 focus:ring-cushion-500 focus:outline-none transition-colors"
             >
               Espanol
             </button>
           </div>
 
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600">
             Cushion Gov — SNAP Intake Assistant
           </p>
-        </div>
+        </main>
       </div>
     );
   }
@@ -150,12 +160,12 @@ export default function IntakePage() {
   if (nameStep && !sessionToken) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-cushion-50 to-white flex items-center justify-center p-4">
-        <div className="max-w-md w-full text-center space-y-6">
+        <main className="max-w-md w-full text-center space-y-6" id="main-content">
           <div>
             <h1 className="text-2xl font-bold text-cushion-800">
               {language === "es" ? "Antes de comenzar" : "Before we begin"}
             </h1>
-            <p className="text-gray-600 mt-2">
+            <p className="text-gray-600 mt-2" id="nameDescription">
               {language === "es"
                 ? "Por favor ingrese su nombre y la primera letra de su apellido. Esto es solo para que el trabajador social pueda llamarlo de la sala de espera."
                 : "Please enter your first name and last initial. This is only so the caseworker can call you from the waiting room."}
@@ -163,17 +173,27 @@ export default function IntakePage() {
           </div>
 
           <div className="space-y-3">
+            <label htmlFor="displayNameInput" className="sr-only">
+              {language === "es" ? "Su nombre y primera letra de apellido" : "Your first name and last initial"}
+            </label>
             <input
+              id="displayNameInput"
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitNameAndStart()}
               placeholder={language === "es" ? "Ejemplo: Maria G." : "Example: Maria G."}
-              className="w-full border-2 border-gray-300 rounded-lg px-4 py-4 text-lg text-center focus:border-cushion-600 focus:outline-none"
+              aria-describedby={nameError ? "nameError nameDescription" : "nameDescription"}
+              aria-invalid={nameError ? "true" : undefined}
+              className="w-full border-2 border-gray-300 rounded-lg px-4 py-4 text-lg text-center focus:border-cushion-600 focus:ring-2 focus:ring-cushion-500 focus:outline-none"
               autoFocus
             />
-            {nameError && <p className="text-red-500 text-sm">{nameError}</p>}
-            <p className="text-xs text-gray-400">
+            {nameError && (
+              <p id="nameError" className="text-red-600 text-sm" role="alert">
+                {nameError}
+              </p>
+            )}
+            <p className="text-xs text-gray-600">
               {language === "es"
                 ? "No recopilamos su nombre completo, SSN, direccion ni telefono."
                 : "We do not collect your full name, SSN, address, or phone number."}
@@ -181,12 +201,12 @@ export default function IntakePage() {
             <button
               onClick={submitNameAndStart}
               disabled={isLoading}
-              className="w-full bg-cushion-600 text-white rounded-lg py-4 text-lg font-medium hover:bg-cushion-700 transition-colors disabled:opacity-50"
+              className="w-full bg-cushion-600 text-white rounded-lg py-4 text-lg font-medium hover:bg-cushion-700 focus:ring-2 focus:ring-cushion-500 focus:outline-none transition-colors disabled:opacity-50"
             >
               {isLoading ? (language === "es" ? "Iniciando..." : "Starting...") : (language === "es" ? "Comenzar" : "Get Started")}
             </button>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -195,9 +215,9 @@ export default function IntakePage() {
   if (completed) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex items-center justify-center p-4">
-        <div className="max-w-md w-full text-center space-y-6">
-          <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto">
-            <span className="text-white text-4xl">{"\u2713"}</span>
+        <main className="max-w-md w-full text-center space-y-6" id="main-content">
+          <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto" role="img" aria-label="Success">
+            <span className="text-white text-4xl" aria-hidden="true">{"\u2713"}</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-800">Thank You</h1>
           <p className="text-gray-600">
@@ -205,15 +225,15 @@ export default function IntakePage() {
             Please wait for your number to be called.
           </p>
           <div className="bg-gray-100 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Your Queue Number</p>
-            <p className="text-3xl font-mono font-bold text-cushion-700">
+            <p className="text-sm text-gray-600">Your Queue Number</p>
+            <p className="text-3xl font-mono font-bold text-cushion-700" aria-label={`Queue number ${queueNumber}`}>
               {queueNumber}
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-gray-400">Reference: CU-{intakeId?.slice(0, 8).toUpperCase()}</p>
+            <p className="text-xs text-gray-600">Reference: CU-{intakeId?.slice(0, 8).toUpperCase()}</p>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -222,15 +242,18 @@ export default function IntakePage() {
   if (showReview && summary) {
     return (
       <div className="min-h-screen bg-white">
+        <a href="#main-content" className="skip-link">Skip to main content</a>
         <ProgressBar currentSection="REVIEW" />
-        <ReviewSummary
-          summary={summary}
-          onConfirm={handleConfirm}
-          onEdit={() => {
-            setShowReview(false);
-            sendMessage("I need to correct something");
-          }}
-        />
+        <main id="main-content">
+          <ReviewSummary
+            summary={summary}
+            onConfirm={handleConfirm}
+            onEdit={() => {
+              setShowReview(false);
+              sendMessage("I need to correct something");
+            }}
+          />
+        </main>
       </div>
     );
   }
@@ -238,15 +261,16 @@ export default function IntakePage() {
   // Chat screen
   return (
     <div className="h-screen flex flex-col bg-white">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <ProgressBar currentSection={section} />
-      <div className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden" id="main-content">
         <ChatInterface
           messages={messages}
           onSendMessage={sendMessage}
           section={section}
           isLoading={isLoading}
         />
-      </div>
+      </main>
     </div>
   );
 }

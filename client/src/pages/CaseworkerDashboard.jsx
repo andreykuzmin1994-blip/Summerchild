@@ -72,7 +72,7 @@ export default function CaseworkerDashboard() {
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-6" id="main-content">
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <StatCard label="Today" value={stats.intakesToday || 0} />
@@ -82,7 +82,7 @@ export default function CaseworkerDashboard() {
 
         {/* Filters */}
         <div className="flex items-center space-x-2 mb-4">
-          <span className="text-sm text-gray-500">Filter:</span>
+          <span className="text-sm text-gray-700">Filter:</span>
           {["", "LOW", "MEDIUM", "HIGH"].map((f) => (
             <button
               key={f}
@@ -109,7 +109,8 @@ export default function CaseworkerDashboard() {
               <Link
                 key={intake.id}
                 to={`/caseworker/intake/${intake.id}`}
-                className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 focus:ring-2 focus:ring-cushion-500 focus:outline-none transition-colors"
+                aria-label={`View intake for ${intake.applicant?.displayName || "Unknown"}, queue ${intake.queueNumber}, risk ${intake.riskScore || "none"}`}
               >
                 <div className="flex items-center space-x-3">
                   {intake.expeditedFlag && (
@@ -133,14 +134,14 @@ export default function CaseworkerDashboard() {
                       {intake.riskScore}
                     </span>
                   )}
-                  <span className="text-xs text-gray-400">{intake.status}</span>
-                  <span className="text-gray-300">{"\u203A"}</span>
+                  <span className="text-xs text-gray-600">{intake.status}</span>
+                  <span className="text-gray-300" aria-hidden="true">{"\u203A"}</span>
                 </div>
               </Link>
             ))}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }

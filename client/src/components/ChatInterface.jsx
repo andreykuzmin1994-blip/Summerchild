@@ -55,8 +55,14 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
 
   return (
     <div className="flex flex-col h-full">
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-scroll">
+      {/* Messages area — aria-live so screen readers announce new messages */}
+      <div
+        className="flex-1 overflow-y-auto p-4 space-y-4 chat-scroll"
+        role="log"
+        aria-live="polite"
+        aria-atomic="false"
+        aria-label="Conversation with intake assistant"
+      >
         {messages.map((msg, i) => (
           <div
             key={i}
@@ -69,18 +75,22 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
                   : "bg-gray-100 text-gray-800 rounded-bl-md"
               }`}
             >
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                <span className="sr-only">{msg.role === "user" ? "You said: " : "Assistant said: "}</span>
+                {msg.content}
+              </p>
             </div>
           </div>
         ))}
         {isLoading && (
-          <div className="flex justify-start">
+          <div className="flex justify-start" role="status" aria-label="Loading response">
             <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex space-x-1">
+              <div className="flex space-x-1" aria-hidden="true">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
               </div>
+              <span className="sr-only">Assistant is typing...</span>
             </div>
           </div>
         )}
@@ -95,19 +105,22 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
       {/* Input area */}
       <div className="border-t border-gray-200 p-4">
         <div className="flex items-center space-x-2">
+          <label htmlFor="chatInput" className="sr-only">Type your answer</label>
           <input
+            id="chatInput"
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type your answer..."
-            className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:border-transparent"
+            className="flex-1 border border-gray-300 rounded-full px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:border-transparent"
             disabled={isLoading}
+            aria-busy={isLoading}
           />
           <button
             onClick={() => handleSend()}
             disabled={isLoading || !input.trim()}
-            className="bg-cushion-600 text-white rounded-full px-5 py-2 text-sm font-medium hover:bg-cushion-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="bg-cushion-600 text-white rounded-full px-5 py-3 text-sm font-medium hover:bg-cushion-700 focus:ring-2 focus:ring-cushion-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Send
           </button>
@@ -115,7 +128,7 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
         <button
           onClick={() => handleSend("I have a question about the process")}
           disabled={isLoading}
-          className="mt-2 text-xs text-cushion-600 hover:text-cushion-800 underline"
+          className="mt-2 text-xs text-cushion-700 hover:text-cushion-800 underline focus:ring-2 focus:ring-cushion-500 focus:outline-none rounded px-1 py-1"
         >
           I have a question
         </button>
