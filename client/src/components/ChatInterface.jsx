@@ -84,7 +84,10 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
               role="article"
               aria-label={msg.role === "user" ? "Your message" : "Assistant message"}
             >
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                <span className="sr-only">{msg.role === "user" ? "You said: " : "Assistant said: "}</span>
+                {msg.content}
+              </p>
             </div>
           </div>
         ))}
@@ -120,7 +123,7 @@ export default function ChatInterface({ messages, onSendMessage, section, isLoad
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type your answer..."
-            className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:border-transparent"
+            className="flex-1 border border-gray-300 rounded-full px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500 focus:border-transparent"
             disabled={isLoading}
             aria-describedby="chat-help"
             autoComplete="off"

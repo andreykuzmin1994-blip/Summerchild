@@ -35,18 +35,33 @@ export default function IntakePage() {
 
   const startSession = async (selectedLanguage) => {
     setLanguage(selectedLanguage);
+    setNameStep(true);
+  };
+
+  const submitNameAndStart = async () => {
+    const trimmed = displayName.trim();
+    if (trimmed.length < 2) {
+      setNameError(
+        language === "es"
+          ? "Por favor ingrese su nombre y la primera letra de su apellido (ej: Maria G.)"
+          : "Please enter your first name and last initial (e.g., Maria G.)"
+      );
+      return;
+    }
+    setNameError("");
     setIsLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ language: selectedLanguage }),
+        body: JSON.stringify({ language, displayName: trimmed }),
       });
       handleHttpError(res);
       const data = await res.json();
       setSessionToken(data.sessionToken);
       setIntakeId(data.intakeId);
+      setQueueNumber(data.queueNumber);
       setMessages([{ role: "assistant", content: data.message }]);
       setSection(data.section);
       setLastActivity(Date.now());
@@ -108,7 +123,7 @@ export default function IntakePage() {
   const handleConfirm = async () => {
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/${intakeId}/complete`, {
+      await fetch(`${API_BASE}/${intakeId}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionToken }),
@@ -122,7 +137,7 @@ export default function IntakePage() {
   };
 
   // Welcome screen (language selection)
-  if (!language) {
+  if (!language || (!sessionToken && !nameStep)) {
     return (
       <>
         <SkipLink />
@@ -177,7 +192,7 @@ export default function IntakePage() {
           <h1 className="text-2xl font-bold text-gray-800">Thank You</h1>
           <p className="text-gray-600">
             Your information has been sent to the caseworker.
-            Please wait for your name to be called.
+            Please wait for your number to be called.
           </p>
           <div className="bg-gray-100 rounded-lg p-4">
             <p className="text-sm text-gray-500">Intake Reference</p>

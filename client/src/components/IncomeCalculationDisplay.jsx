@@ -36,7 +36,7 @@ function Row({ label, value, bold, prefix, highlight, note }) {
     <div className={`flex justify-between py-0.5 ${highlight ? "bg-yellow-50 px-2 rounded" : ""}`}>
       <div className="flex-1">
         <span className={bold ? "font-medium text-gray-800" : "text-gray-600"}>{label}</span>
-        {note && <p className="text-xs text-gray-400">{note}</p>}
+        {note && <p className="text-xs text-gray-600">{note}</p>}
       </div>
       <span className={bold ? "font-bold text-gray-800" : "text-gray-700"} aria-label={`${label}: ${formattedValue}`}>
         {formattedValue}

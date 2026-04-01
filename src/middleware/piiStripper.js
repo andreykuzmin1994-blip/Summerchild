@@ -1,10 +1,10 @@
 /**
- * PII Stripping Layer — strips all personally identifiable information
- * before any data is sent to the Claude API.
+ * PII Safety Layer — lightweight guard that catches any PII an applicant
+ * might accidentally type (e.g., full SSN, phone number) and redacts it
+ * before sending to the Claude API.
  *
- * The mapping table stays in the county's database, never leaves.
- * Claude only sees: income figures, household size, expense amounts,
- * age ranges, relationship types.
+ * Since we only collect first name + last initial, this is a safety net,
+ * not the primary PII strategy. The primary strategy is: don't ask for PII.
  */
 class PIIStripper {
   constructor() {
@@ -12,7 +12,7 @@ class PIIStripper {
   }
 
   /**
-   * Strip PII from text before sending to AI.
+   * Strip any accidentally-provided PII from text before sending to AI.
    */
   strip(text) {
     let cleaned = text;
@@ -22,38 +22,32 @@ class PIIStripper {
       cleaned = cleaned.replaceAll(realName, placeholder);
     }
 
-    // Replace SSN patterns
-    cleaned = cleaned.replace(/\b\d{3}-?\d{2}-?\d{4}\b/g, "[SSN_REDACTED]");
+    // Replace SSN patterns (in case applicant volunteers one)
+    cleaned = cleaned.replace(/\b\d{3}-?\d{2}-?\d{4}\b/g, "[REDACTED]");
 
     // Replace phone patterns
     cleaned = cleaned.replace(
       /\b\(?\d{3}\)?[-.)\s]?\d{3}[-.)\s]?\d{4}\b/g,
-      "[PHONE_REDACTED]"
+      "[REDACTED]"
     );
 
-    // Replace street addresses (heuristic: number + street name patterns)
+    // Replace street addresses
     cleaned = cleaned.replace(
       /\b\d+\s+[A-Z][a-zA-Z]+\s+(St|Ave|Blvd|Dr|Rd|Ln|Way|Ct|Pl|Pkwy)\b\.?/gi,
-      "[ADDRESS_REDACTED]"
+      "[REDACTED]"
     );
 
     // Replace email addresses
     cleaned = cleaned.replace(
       /\b[\w.-]+@[\w.-]+\.\w+\b/g,
-      "[EMAIL_REDACTED]"
-    );
-
-    // Replace dates of birth (keep month/year, strip day)
-    cleaned = cleaned.replace(
-      /\b(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(\d{4})\b/g,
-      (match, month, day, year) => `${month}/XX/${year}`
+      "[REDACTED]"
     );
 
     return cleaned;
   }
 
   /**
-   * Restore PII in AI response for display to the applicant.
+   * Restore display name in AI response for the applicant.
    */
   restore(aiResponse) {
     let restored = aiResponse;
@@ -69,31 +63,6 @@ class PIIStripper {
   addMapping(realValue, placeholder) {
     if (realValue && realValue.length > 1) {
       this.mappings.set(realValue, placeholder);
-    }
-  }
-
-  /**
-   * Build mappings from intake data.
-   */
-  buildFromIntake(applicant, householdMembers) {
-    if (applicant) {
-      if (applicant.firstName) this.addMapping(applicant.firstName, "[APPLICANT_FIRST]");
-      if (applicant.lastName) this.addMapping(applicant.lastName, "[APPLICANT_LAST]");
-      const fullName = `${applicant.firstName} ${applicant.lastName}`.trim();
-      if (fullName.length > 1) this.addMapping(fullName, "[APPLICANT]");
-      if (applicant.phone) this.addMapping(applicant.phone, "[PHONE_REDACTED]");
-      if (applicant.email) this.addMapping(applicant.email, "[EMAIL_REDACTED]");
-      if (applicant.addressStreet) this.addMapping(applicant.addressStreet, "[ADDRESS_REDACTED]");
-    }
-
-    if (householdMembers) {
-      householdMembers.forEach((member, index) => {
-        const label = `[MEMBER_${index + 1}]`;
-        if (member.firstName) this.addMapping(member.firstName, `${label}_FIRST`);
-        if (member.lastName) this.addMapping(member.lastName, `${label}_LAST`);
-        const fullName = `${member.firstName} ${member.lastName}`.trim();
-        if (fullName.length > 1) this.addMapping(fullName, label);
-      });
     }
   }
 
