@@ -1,0 +1,631 @@
+{
+  "metadata": {
+    "source": "Georgia Gateway (gateway.ga.gov) + DHS Form 297",
+    "state": "GA",
+    "program": "SNAP",
+    "version": "2026-Q1",
+    "lastReviewed": "2026-03-01",
+    "notes": "Maps every Gateway SNAP field to a Cushion Gov data model field. Conditional fields are annotated with display_if rules."
+  },
+  "sections": [
+    {
+      "form297Section": "Tell Us About the Applicant",
+      "gatewayScreen": "Applicant Info",
+      "fields": [
+        {
+          "gatewayField": "First Name",
+          "form297Ref": "1a",
+          "cushionModel": "Applicant",
+          "cushionField": "firstName",
+          "type": "text",
+          "required": true,
+          "maxLength": 50
+        },
+        {
+          "gatewayField": "Last Name",
+          "form297Ref": "1b",
+          "cushionModel": "Applicant",
+          "cushionField": "lastName",
+          "type": "text",
+          "required": true,
+          "maxLength": 50
+        },
+        {
+          "gatewayField": "Date of Birth",
+          "form297Ref": "1c",
+          "cushionModel": "Applicant",
+          "cushionField": "dob",
+          "type": "date",
+          "required": true,
+          "validation": "must be in the past, applicant must be 18+"
+        },
+        {
+          "gatewayField": "Social Security Number",
+          "form297Ref": "1d",
+          "cushionModel": "Applicant",
+          "cushionField": "ssnLastFour",
+          "type": "ssn",
+          "required": false,
+          "notes": "Cushion stores last 4 digits only for display. Full SSN never stored."
+        },
+        {
+          "gatewayField": "Street Address",
+          "form297Ref": "2a",
+          "cushionModel": "Applicant",
+          "cushionField": "addressStreet",
+          "type": "text",
+          "required": true,
+          "maxLength": 100
+        },
+        {
+          "gatewayField": "City",
+          "form297Ref": "2b",
+          "cushionModel": "Applicant",
+          "cushionField": "addressCity",
+          "type": "text",
+          "required": true,
+          "maxLength": 50
+        },
+        {
+          "gatewayField": "State",
+          "form297Ref": "2c",
+          "cushionModel": "Applicant",
+          "cushionField": "addressState",
+          "type": "select",
+          "required": true,
+          "defaultValue": "GA",
+          "options": ["GA"]
+        },
+        {
+          "gatewayField": "ZIP Code",
+          "form297Ref": "2d",
+          "cushionModel": "Applicant",
+          "cushionField": "addressZip",
+          "type": "text",
+          "required": true,
+          "pattern": "^[0-9]{5}$"
+        },
+        {
+          "gatewayField": "Phone Number",
+          "form297Ref": "3a",
+          "cushionModel": "Applicant",
+          "cushionField": "phone",
+          "type": "phone",
+          "required": false,
+          "pattern": "^[0-9]{10}$"
+        },
+        {
+          "gatewayField": "Email Address",
+          "form297Ref": "3b",
+          "cushionModel": "Applicant",
+          "cushionField": "email",
+          "type": "email",
+          "required": false
+        },
+        {
+          "gatewayField": "Citizenship/Immigration Status",
+          "form297Ref": "4",
+          "cushionModel": "Applicant",
+          "cushionField": "citizenshipStatus",
+          "type": "select",
+          "required": true,
+          "options": ["US_CITIZEN", "PERMANENT_RESIDENT", "QUALIFIED_ALIEN", "OTHER", "UNDISCLOSED"],
+          "gatewayOptions": [
+            { "label": "U.S. Citizen", "value": "US_CITIZEN" },
+            { "label": "Lawful Permanent Resident (Green Card)", "value": "PERMANENT_RESIDENT" },
+            { "label": "Qualified Alien (refugee, asylee, etc.)", "value": "QUALIFIED_ALIEN" },
+            { "label": "Other immigration status", "value": "OTHER" },
+            { "label": "Prefer not to disclose", "value": "UNDISCLOSED" }
+          ]
+        },
+        {
+          "gatewayField": "Preferred Language",
+          "form297Ref": "5",
+          "cushionModel": "Applicant",
+          "cushionField": "languagePreference",
+          "type": "select",
+          "required": true,
+          "defaultValue": "en",
+          "gatewayOptions": [
+            { "label": "English", "value": "en" },
+            { "label": "Spanish", "value": "es" },
+            { "label": "Other", "value": "other" }
+          ]
+        },
+        {
+          "gatewayField": "Head of Household",
+          "form297Ref": "6",
+          "cushionModel": "Applicant",
+          "cushionField": "isHeadOfHousehold",
+          "type": "boolean",
+          "required": true,
+          "defaultValue": true,
+          "notes": "Gateway assumes applicant is head of household unless otherwise stated"
+        }
+      ]
+    },
+    {
+      "form297Section": "Household Members",
+      "gatewayScreen": "Household Composition",
+      "repeatable": true,
+      "notes": "One entry per additional household member. Gateway asks about each person who lives with the applicant.",
+      "fields": [
+        {
+          "gatewayField": "First Name",
+          "form297Ref": "7a",
+          "cushionModel": "HouseholdMember",
+          "cushionField": "firstName",
+          "type": "text",
+          "required": true
+        },
+        {
+          "gatewayField": "Last Name",
+          "form297Ref": "7b",
+          "cushionModel": "HouseholdMember",
+          "cushionField": "lastName",
+          "type": "text",
+          "required": true
+        },
+        {
+          "gatewayField": "Date of Birth",
+          "form297Ref": "7c",
+          "cushionModel": "HouseholdMember",
+          "cushionField": "dob",
+          "type": "date",
+          "required": true,
+          "derivedFields": [
+            {
+              "cushionField": "isElderly",
+              "rule": "age >= 60 as of current date"
+            }
+          ]
+        },
+        {
+          "gatewayField": "Relationship to Applicant",
+          "form297Ref": "7d",
+          "cushionModel": "HouseholdMember",
+          "cushionField": "relationshipToApplicant",
+          "type": "select",
+          "required": true,
+          "gatewayOptions": [
+            { "label": "Spouse", "value": "Spouse" },
+            { "label": "Son/Daughter", "value": "Child" },
+            { "label": "Parent", "value": "Parent" },
+            { "label": "Sibling", "value": "Sibling" },
+            { "label": "Grandparent", "value": "Grandparent" },
+            { "label": "Grandchild", "value": "Grandchild" },
+            { "label": "Other relative", "value": "Other relative" },
+            { "label": "Unrelated person", "value": "Unrelated" }
+          ]
+        },
+        {
+          "gatewayField": "Does this person buy food and prepare meals with you?",
+          "form297Ref": "7e",
+          "cushionModel": "HouseholdMember",
+          "cushionField": "purchasesAndPreparesTogether",
+          "type": "boolean",
+          "required": true,
+          "notes": "Purchase-and-prepare test: determines SNAP household membership. If YES, member is in the SNAP household. Spouses and children under 22 are automatically included regardless of answer."
+        },
+        {
+          "gatewayField": "In SNAP Household",
+          "form297Ref": null,
+          "cushionModel": "HouseholdMember",
+          "cushionField": "inSnapHousehold",
+          "type": "boolean",
+          "derived": true,
+          "derivationRule": "true if purchasesAndPreparesTogether=true OR relationship is Spouse OR (relationship is Child AND age < 22)"
+        },
+        {
+          "gatewayField": "Does this person have a disability?",
+          "form297Ref": "7f",
+          "cushionModel": "HouseholdMember",
+          "cushionField": "isDisabled",
+          "type": "boolean",
+          "required": true,
+          "notes": "Gateway asks about receipt of SSI/SSDI as proxy for disability determination"
+        },
+        {
+          "gatewayField": "Does this person have earned income?",
+          "form297Ref": null,
+          "cushionModel": "HouseholdMember",
+          "cushionField": "hasEarnedIncome",
+          "type": "boolean",
+          "derived": true,
+          "derivationRule": "true if any IncomeSource with incomeType EMPLOYMENT or SELF_EMPLOYMENT is linked to this member"
+        },
+        {
+          "gatewayField": "Does this person have unearned income?",
+          "form297Ref": null,
+          "cushionModel": "HouseholdMember",
+          "cushionField": "hasUnearnedIncome",
+          "type": "boolean",
+          "derived": true,
+          "derivationRule": "true if any IncomeSource with incomeType other than EMPLOYMENT/SELF_EMPLOYMENT is linked to this member"
+        }
+      ]
+    },
+    {
+      "form297Section": "Income",
+      "gatewayScreen": "Income",
+      "repeatable": true,
+      "notes": "One entry per income source per household member. Gateway groups by member, then by income type.",
+      "fields": [
+        {
+          "gatewayField": "Household Member",
+          "form297Ref": "8a",
+          "cushionModel": "IncomeSource",
+          "cushionField": "householdMemberId",
+          "type": "reference",
+          "referencesModel": "HouseholdMember",
+          "required": true,
+          "notes": "If income belongs to the applicant, householdMemberId is null (applicant income)"
+        },
+        {
+          "gatewayField": "Type of Income",
+          "form297Ref": "8b",
+          "cushionModel": "IncomeSource",
+          "cushionField": "incomeType",
+          "type": "select",
+          "required": true,
+          "gatewayOptions": [
+            { "label": "Wages/Salary", "value": "EMPLOYMENT", "gatewayCategory": "Earned" },
+            { "label": "Self-Employment", "value": "SELF_EMPLOYMENT", "gatewayCategory": "Earned" },
+            { "label": "SSI", "value": "SSI", "gatewayCategory": "Unearned" },
+            { "label": "SSDI", "value": "SSDI", "gatewayCategory": "Unearned" },
+            { "label": "Social Security (Retirement/Survivors)", "value": "SOCIAL_SECURITY", "gatewayCategory": "Unearned" },
+            { "label": "Unemployment Compensation", "value": "UNEMPLOYMENT", "gatewayCategory": "Unearned" },
+            { "label": "Child Support Received", "value": "CHILD_SUPPORT_RECEIVED", "gatewayCategory": "Unearned" },
+            { "label": "Veterans Benefits", "value": "VA_BENEFITS", "gatewayCategory": "Unearned" },
+            { "label": "Pension/Retirement", "value": "PENSION", "gatewayCategory": "Unearned" },
+            { "label": "Other Income", "value": "OTHER", "gatewayCategory": "Unearned" }
+          ]
+        },
+        {
+          "gatewayField": "Employer/Payer Name",
+          "form297Ref": "8c",
+          "cushionModel": "IncomeSource",
+          "cushionField": "employerOrPayerName",
+          "type": "text",
+          "required": false,
+          "display_if": "incomeType in [EMPLOYMENT, SELF_EMPLOYMENT]",
+          "notes": "Gateway requires employer name for wage income. Optional for other types."
+        },
+        {
+          "gatewayField": "How Often Are You Paid?",
+          "form297Ref": "8d",
+          "cushionModel": "IncomeSource",
+          "cushionField": "payFrequency",
+          "type": "select",
+          "required": true,
+          "gatewayOptions": [
+            { "label": "Weekly", "value": "WEEKLY" },
+            { "label": "Every two weeks", "value": "BIWEEKLY" },
+            { "label": "Twice a month", "value": "SEMI_MONTHLY" },
+            { "label": "Monthly", "value": "MONTHLY" }
+          ]
+        },
+        {
+          "gatewayField": "Gross Amount Per Pay Period",
+          "form297Ref": "8e",
+          "cushionModel": "IncomeSource",
+          "cushionField": "grossAmountPerPeriod",
+          "type": "currency",
+          "required": true,
+          "validation": "must be >= 0",
+          "notes": "Before taxes and deductions. Gateway asks for gross, not net."
+        },
+        {
+          "gatewayField": "SNAP Monthly Amount",
+          "form297Ref": null,
+          "cushionModel": "IncomeSource",
+          "cushionField": "snapMonthlyAmount",
+          "type": "currency",
+          "derived": true,
+          "derivationRule": "grossAmountPerPeriod * FREQUENCY_MULTIPLIER (weekly: 4.333, biweekly: 2.167, semi-monthly: 2, monthly: 1)"
+        }
+      ]
+    },
+    {
+      "form297Section": "Self-Employment",
+      "gatewayScreen": "Income (sub-section)",
+      "display_if": "incomeType == SELF_EMPLOYMENT",
+      "notes": "Additional fields shown only when a self-employment income source is reported.",
+      "fields": [
+        {
+          "gatewayField": "Gross Self-Employment Receipts (monthly)",
+          "form297Ref": "9a",
+          "cushionModel": "IncomeSource",
+          "cushionField": "selfEmploymentGross",
+          "type": "currency",
+          "required": true,
+          "display_if": "incomeType == SELF_EMPLOYMENT"
+        },
+        {
+          "gatewayField": "Business Expenses (monthly)",
+          "form297Ref": "9b",
+          "cushionModel": "IncomeSource",
+          "cushionField": "selfEmploymentExpenses",
+          "type": "currency",
+          "required": false,
+          "display_if": "incomeType == SELF_EMPLOYMENT",
+          "notes": "Applicant can itemize or use 40% standard deduction — Cushion calculates both and uses the one more favorable to the applicant."
+        },
+        {
+          "gatewayField": "Deduction Method",
+          "form297Ref": "9c",
+          "cushionModel": "IncomeSource",
+          "cushionField": "selfEmploymentDeductionMethod",
+          "type": "select",
+          "required": false,
+          "display_if": "incomeType == SELF_EMPLOYMENT",
+          "gatewayOptions": [
+            { "label": "I want to list my actual business expenses", "value": "ITEMIZED" },
+            { "label": "Use the standard 40% deduction", "value": "STANDARD_40_PCT" }
+          ],
+          "notes": "Cushion auto-selects the more favorable method regardless of choice"
+        },
+        {
+          "gatewayField": "Net Self-Employment Income",
+          "form297Ref": null,
+          "cushionModel": "IncomeSource",
+          "cushionField": "selfEmploymentNet",
+          "type": "currency",
+          "derived": true,
+          "derivationRule": "min(gross - expenses, gross * 0.60)"
+        }
+      ]
+    },
+    {
+      "form297Section": "Resources",
+      "gatewayScreen": "Resources",
+      "notes": "Georgia has BBCE (no asset test for most households). Gateway still asks these questions but they do not affect SNAP eligibility in GA. Cushion collects for expedited determination only.",
+      "fields": [
+        {
+          "gatewayField": "Cash on hand and checking/savings accounts",
+          "form297Ref": "10a",
+          "cushionModel": "Intake",
+          "cushionField": "liquidResources",
+          "type": "currency",
+          "required": false,
+          "notes": "Used only for expedited processing determination. GA BBCE = no asset test."
+        },
+        {
+          "gatewayField": "Vehicles",
+          "form297Ref": "10b",
+          "cushionModel": null,
+          "cushionField": null,
+          "type": "text",
+          "required": false,
+          "notes": "Gateway asks but GA excludes vehicles from asset test under BBCE. Cushion does not collect."
+        }
+      ]
+    },
+    {
+      "form297Section": "Shelter Expenses",
+      "gatewayScreen": "Expenses",
+      "fields": [
+        {
+          "gatewayField": "Rent or Mortgage Payment (monthly)",
+          "form297Ref": "11a",
+          "cushionModel": "ShelterExpense",
+          "cushionField": "rentOrMortgage",
+          "type": "currency",
+          "required": true,
+          "validation": "must be >= 0"
+        },
+        {
+          "gatewayField": "Property Tax (monthly)",
+          "form297Ref": "11b",
+          "cushionModel": "ShelterExpense",
+          "cushionField": "propertyTax",
+          "type": "currency",
+          "required": false,
+          "defaultValue": 0,
+          "notes": "If paid annually, Gateway divides by 12. Cushion AI should ask and convert."
+        },
+        {
+          "gatewayField": "Homeowners/Renters Insurance (monthly)",
+          "form297Ref": "11c",
+          "cushionModel": "ShelterExpense",
+          "cushionField": "homeownersInsurance",
+          "type": "currency",
+          "required": false,
+          "defaultValue": 0
+        },
+        {
+          "gatewayField": "Which utilities do you pay?",
+          "form297Ref": "11d",
+          "cushionModel": "ShelterExpense",
+          "cushionField": "utilityType",
+          "type": "select",
+          "required": true,
+          "gatewayOptions": [
+            { "label": "Heating and/or cooling (gas, electric, oil, propane)", "value": "HEATING_COOLING", "sua": 414 },
+            { "label": "Non-heating electric, water, sewer, trash, cooking fuel", "value": "BASIC", "sua": 284 },
+            { "label": "Telephone only", "value": "PHONE_ONLY", "sua": 55 },
+            { "label": "No utility expenses (included in rent)", "value": "NONE", "sua": 0 }
+          ],
+          "notes": "Gateway presents individual utility checkboxes; the highest applicable SUA category is used. Cushion simplifies to the four SUA categories directly."
+        },
+        {
+          "gatewayField": "Standard Utility Allowance",
+          "form297Ref": null,
+          "cushionModel": "ShelterExpense",
+          "cushionField": "standardUtilityAllowance",
+          "type": "currency",
+          "derived": true,
+          "derivationRule": "Looked up from ga-snap-deductions-fy2026.json based on utilityType selection"
+        },
+        {
+          "gatewayField": "Total Shelter Cost",
+          "form297Ref": null,
+          "cushionModel": "ShelterExpense",
+          "cushionField": "totalShelterCost",
+          "type": "currency",
+          "derived": true,
+          "derivationRule": "rentOrMortgage + propertyTax + homeownersInsurance + standardUtilityAllowance"
+        }
+      ]
+    },
+    {
+      "form297Section": "Dependent Care",
+      "gatewayScreen": "Expenses",
+      "fields": [
+        {
+          "gatewayField": "Monthly dependent care costs (child care, adult day care)",
+          "form297Ref": "12a",
+          "cushionModel": "Intake",
+          "cushionField": "dependentCareExpense",
+          "type": "currency",
+          "required": false,
+          "defaultValue": 0,
+          "notes": "Only deductible if tied to work or training. Consistency checker flags if claimed without earned income.",
+          "gatewayValidation": "Gateway asks for the care provider name and monthly cost. Cushion collects only the amount."
+        }
+      ]
+    },
+    {
+      "form297Section": "Medical Expenses",
+      "gatewayScreen": "Expenses",
+      "display_if": "any household member has isElderly=true OR isDisabled=true",
+      "notes": "Only collected for households with elderly (60+) or disabled members. Expenses must exceed $35/month to qualify for deduction.",
+      "fields": [
+        {
+          "gatewayField": "Total monthly out-of-pocket medical expenses",
+          "form297Ref": "13a",
+          "cushionModel": "Intake",
+          "cushionField": "medicalExpenses",
+          "type": "currency",
+          "required": false,
+          "defaultValue": 0,
+          "notes": "Includes prescriptions, medical equipment, health insurance premiums, transportation to medical appointments. Standard deduction of $161 if over $35 threshold; or actual amount minus $35 if that is higher.",
+          "gatewayCategories": [
+            "Prescription medications",
+            "Over-the-counter medications (if prescribed)",
+            "Health insurance premiums (not paid by employer)",
+            "Medical equipment and supplies",
+            "Transportation to medical appointments",
+            "Dental and vision care",
+            "In-home attendant care"
+          ]
+        }
+      ]
+    },
+    {
+      "form297Section": "Child Support Paid",
+      "gatewayScreen": "Expenses",
+      "fields": [
+        {
+          "gatewayField": "Monthly child support legally owed and paid",
+          "form297Ref": "14a",
+          "cushionModel": "Intake",
+          "cushionField": "childSupportPaid",
+          "type": "currency",
+          "required": false,
+          "defaultValue": 0,
+          "notes": "Must be legally obligated child support (court order). Voluntary payments do not count."
+        }
+      ]
+    }
+  ],
+  "derivedCalculations": {
+    "snapMonthlyIncome": {
+      "description": "Convert each income source to monthly using SNAP frequency multipliers",
+      "multipliers": {
+        "WEEKLY": 4.333,
+        "BIWEEKLY": 2.167,
+        "SEMI_MONTHLY": 2,
+        "MONTHLY": 1
+      }
+    },
+    "selfEmploymentNet": {
+      "description": "For self-employment: use whichever method produces lower countable income",
+      "formula": "min(gross - itemizedExpenses, gross * 0.60)"
+    },
+    "snapHouseholdSize": {
+      "description": "Count applicant (always 1) + household members where inSnapHousehold=true",
+      "formula": "1 + count(HouseholdMember where inSnapHousehold=true)"
+    },
+    "isElderly": {
+      "description": "Derived from date of birth",
+      "formula": "age >= 60 as of intake date"
+    }
+  },
+  "documentRequirements": {
+    "description": "Documents to bring to the DFCS interview, dynamically generated based on intake data",
+    "rules": [
+      {
+        "condition": "always",
+        "documentType": "Photo ID",
+        "description": "Valid government-issued photo ID for the applicant"
+      },
+      {
+        "condition": "any IncomeSource with incomeType=EMPLOYMENT",
+        "documentType": "Pay stubs",
+        "description": "Last 4 pay stubs from {employerOrPayerName} ({payFrequency})",
+        "perMember": true
+      },
+      {
+        "condition": "any IncomeSource with incomeType=SELF_EMPLOYMENT",
+        "documentType": "Self-employment records",
+        "description": "Business income and expense records for the last 12 months",
+        "perMember": true
+      },
+      {
+        "condition": "any IncomeSource with incomeType=SOCIAL_SECURITY or SSI or SSDI",
+        "documentType": "Social Security award letter",
+        "description": "Most recent Social Security award letter or bank statement showing deposit",
+        "perMember": true
+      },
+      {
+        "condition": "any IncomeSource with incomeType=UNEMPLOYMENT",
+        "documentType": "Unemployment documentation",
+        "description": "Unemployment compensation determination letter",
+        "perMember": true
+      },
+      {
+        "condition": "any IncomeSource with incomeType=VA_BENEFITS",
+        "documentType": "VA benefits letter",
+        "description": "Veterans Administration benefits award letter",
+        "perMember": true
+      },
+      {
+        "condition": "any IncomeSource with incomeType=PENSION",
+        "documentType": "Pension statement",
+        "description": "Most recent pension or retirement account statement",
+        "perMember": true
+      },
+      {
+        "condition": "shelterExpense.rentOrMortgage > 0",
+        "documentType": "Lease or mortgage statement",
+        "description": "Current lease agreement, rental receipt, or mortgage statement"
+      },
+      {
+        "condition": "shelterExpense.utilityType != NONE",
+        "documentType": "Utility bill",
+        "description": "Most recent utility bill (gas, electric, or phone depending on utility type claimed)"
+      },
+      {
+        "condition": "medicalExpenses > 35 AND hasElderlyOrDisabled",
+        "documentType": "Medical expense receipts",
+        "description": "Receipts or statements for out-of-pocket medical expenses over $35/month"
+      },
+      {
+        "condition": "childSupportPaid > 0",
+        "documentType": "Child support court order",
+        "description": "Court order and proof of child support payments made"
+      },
+      {
+        "condition": "dependentCareExpense > 0",
+        "documentType": "Dependent care receipts",
+        "description": "Receipts or provider statement for dependent care expenses"
+      },
+      {
+        "condition": "citizenshipStatus != US_CITIZEN",
+        "documentType": "Immigration documents",
+        "description": "Permanent resident card, I-94, refugee/asylee documentation, or other proof of immigration status"
+      }
+    ]
+  }
+}
