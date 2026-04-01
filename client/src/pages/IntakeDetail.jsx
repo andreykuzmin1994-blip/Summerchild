@@ -1,14 +1,19 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import IncomeCalculationDisplay from "../components/IncomeCalculationDisplay";
-import DocumentChecklist from "../components/DocumentChecklist";
-import ErrorBanner from "../components/ErrorBanner";
-import SkipLink from "../components/SkipLink";
 
 const RISK_COLORS = {
-  LOW: "bg-green-500",
-  MEDIUM: "bg-yellow-500",
-  HIGH: "bg-red-500",
+  LOW: { bg: "bg-green-100", text: "text-green-800", dot: "bg-green-500", label: "GREEN" },
+  MEDIUM: { bg: "bg-yellow-100", text: "text-yellow-800", dot: "bg-yellow-500", label: "YELLOW" },
+  HIGH: { bg: "bg-red-100", text: "text-red-800", dot: "bg-red-500", label: "RED" },
+};
+
+const DEDUCTION_LABELS = {
+  STANDARD: "Standard deduction",
+  EARNED_INCOME_20PCT: "Earned income (20%)",
+  DEPENDENT_CARE: "Dependent care",
+  MEDICAL: "Medical (elderly/disabled)",
+  CHILD_SUPPORT_PAID: "Child support paid",
+  SHELTER_EXCESS: "Excess shelter",
 };
 
 export default function IntakeDetail() {
@@ -61,239 +66,306 @@ export default function IntakeDetail() {
     setReviewing(false);
   };
 
-  if (loading) {
-    return (
-      <div className="p-8 text-center text-gray-500" role="status" aria-label="Loading intake">
-        Loading intake details...
-      </div>
-    );
-  }
+  const handlePrint = () => window.print();
 
-  if (error) {
-    return (
-      <div className="p-8 max-w-md mx-auto">
-        <ErrorBanner message={error} onRetry={loadIntake} />
-      </div>
-    );
-  }
-
-  if (!intake) {
-    return (
-      <div className="p-8 text-center">
-        <p className="text-red-500 mb-4">Intake not found</p>
-        <button
-          onClick={() => navigate("/caseworker/dashboard")}
-          className="text-cushion-600 hover:text-cushion-800 text-sm underline"
-        >
-          Return to Dashboard
-        </button>
-      </div>
-    );
-  }
+  if (loading) return <div className="p-8 text-center text-gray-500">Loading...</div>;
+  if (!intake) return <div className="p-8 text-center text-red-500">Intake not found</div>;
 
   const flags = intake.consistencyFlags || [];
+  const risk = RISK_COLORS[intake.riskScore] || RISK_COLORS.LOW;
+  const eligibility = intake.eligibility;
+  const auditTrail = intake.auditTrail;
+  const snapHouseholdSize = (intake.householdMembers?.filter((m) => m.inSnapHousehold).length || 0) + 1;
 
   return (
-    <>
-      <SkipLink />
-      <div className="min-h-screen bg-gray-50">
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 px-6 py-4 print:border-0">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <button
-              onClick={() => navigate("/caseworker/dashboard")}
-              className="text-cushion-600 hover:text-cushion-800 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500 rounded"
-              aria-label="Return to dashboard"
-            >
+            <button onClick={() => navigate("/caseworker/dashboard")} className="text-cushion-600 hover:text-cushion-800 text-sm print:hidden">
               {"\u2190"} Dashboard
             </button>
             <div>
-              <h1 className="text-base sm:text-lg font-bold text-gray-800">
+              <h1 className="text-xl font-bold text-gray-900 tracking-wide">
                 CUSHION INTAKE SUMMARY
               </h1>
-              <p className="text-xs text-gray-500">
-                Intake #{intake.id.slice(0, 8).toUpperCase()} | {new Date(intake.createdAt).toLocaleString()}
+              <p className="text-sm text-gray-500">
+                Intake #CU-{new Date(intake.createdAt).toISOString().slice(0, 10).replace(/-/g, "")}-{intake.id.slice(0, 4).toUpperCase()}
+                {" | "}Completed: {new Date(intake.updatedAt).toLocaleString()}
               </p>
             </div>
           </div>
-          <div className="flex items-center space-x-3 ml-auto sm:ml-0">
-            {intake.expeditedFlag && (
-              <span className="bg-red-500 text-white text-xs sm:text-sm px-2 sm:px-3 py-1 rounded font-bold" role="status">
-                EXPEDITED
+          <div className="flex items-center space-x-3 print:hidden">
+            <button onClick={handlePrint} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 transition-colors">
+              Print
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-4xl mx-auto p-6 space-y-5">
+        {/* Risk Score + Expedited status bar */}
+        <div className="flex items-center justify-between bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-bold text-gray-600 uppercase">Risk Score:</span>
+              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full ${risk.bg}`}>
+                <span className={`w-2.5 h-2.5 rounded-full ${risk.dot}`} />
+                <span className={`text-sm font-bold ${risk.text}`}>{risk.label}</span>
               </span>
-            )}
-            {intake.riskScore && (
-              <div className="flex items-center space-x-1">
-                <span className={`w-3 h-3 rounded-full ${RISK_COLORS[intake.riskScore]}`} aria-hidden="true" />
-                <span className="text-sm font-medium">{intake.riskScore} RISK</span>
-              </div>
+            </div>
+          </div>
+          <div>
+            {intake.expeditedFlag ? (
+              <span className="bg-red-600 text-white text-sm px-4 py-1.5 rounded font-bold">
+                EXPEDITED &mdash; 7-day processing
+              </span>
+            ) : (
+              <span className="text-sm text-gray-500">Standard processing</span>
             )}
           </div>
-        </header>
+        </div>
 
-        <main id="main-content" className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6" role="main">
-          {/* Expedited banner */}
-          {intake.expeditedFlag && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4" role="alert">
-              <p className="text-red-800 font-bold">EXPEDITED: 7-day processing required</p>
-              <p className="text-red-600 text-sm">{intake.expeditedReason}</p>
-            </div>
-          )}
+        {/* Expedited reason */}
+        {intake.expeditedFlag && intake.expeditedReason && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-800 font-bold text-sm">EXPEDITED: YES</p>
+            <p className="text-red-700 text-sm mt-1">{intake.expeditedReason}</p>
+          </div>
+        )}
 
-          {/* Flags */}
-          {flags.length > 0 && (
-            <section aria-label="Data consistency flags">
-              <h2 className="font-bold text-gray-700 mb-2">FLAGS ({flags.length})</h2>
-              <div className="space-y-2">
-                {flags.map((flag, i) => (
-                  <div key={i} className={`rounded-lg p-3 ${
-                    flag.severity === "HIGH" ? "bg-red-50 border border-red-200" :
-                    flag.severity === "MEDIUM" ? "bg-yellow-50 border border-yellow-200" :
-                    "bg-blue-50 border border-blue-200"
-                  }`} role="alert">
-                    <p className="text-sm font-medium">
-                      <span aria-hidden="true">
-                        {flag.severity === "HIGH" || flag.severity === "MEDIUM" ? "\u26A0\uFE0F" : "\u2139\uFE0F"}{" "}
-                      </span>
+        {/* Flags */}
+        {flags.length > 0 && (
+          <Section title={`FLAGS (${flags.length})`}>
+            <div className="space-y-2">
+              {flags.map((flag, i) => (
+                <div key={i} className={`flex items-start space-x-2 rounded-lg p-3 ${
+                  flag.severity === "HIGH" ? "bg-red-50 border border-red-200" :
+                  flag.severity === "MEDIUM" ? "bg-yellow-50 border border-yellow-200" :
+                  "bg-blue-50 border border-blue-200"
+                }`}>
+                  <span className="mt-0.5 text-sm">
+                    {flag.severity === "HIGH" ? "\u26A0\uFE0F" : flag.severity === "MEDIUM" ? "\u26A0\uFE0F" : "\u2139\uFE0F"}
+                  </span>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-800">
                       {flag.severity}: {flag.message}
                     </p>
                     {flag.suggestedAction && (
-                      <p className="text-xs text-gray-600 mt-1">Action: {flag.suggestedAction}</p>
+                      <p className="text-xs text-gray-600 mt-0.5">Action: {flag.suggestedAction}</p>
                     )}
                   </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Applicant Details */}
-          {intake.applicant && (
-            <Section title="APPLICANT INFORMATION">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-                <Field label="Name" value={`${intake.applicant.firstName} ${intake.applicant.lastName}`} />
-                {intake.applicant.dob && (
-                  <Field label="Date of Birth" value={new Date(intake.applicant.dob).toLocaleDateString()} />
-                )}
-                {intake.applicant.ssnLastFour && (
-                  <Field label="SSN (last 4)" value={`***-**-${intake.applicant.ssnLastFour}`} />
-                )}
-                {intake.applicant.citizenshipStatus && (
-                  <Field label="Citizenship" value={formatCitizenship(intake.applicant.citizenshipStatus)} />
-                )}
-                {intake.applicant.languagePreference && (
-                  <Field label="Language" value={intake.applicant.languagePreference === "es" ? "Spanish" : "English"} />
-                )}
-                {intake.applicant.phone && (
-                  <Field label="Phone" value={intake.applicant.phone} />
-                )}
-                {intake.applicant.email && (
-                  <Field label="Email" value={intake.applicant.email} />
-                )}
-              </div>
-              {(intake.applicant.addressStreet || intake.applicant.addressCity) && (
-                <div className="mt-2 pt-2 border-t border-gray-100">
-                  <p className="text-xs text-gray-500 font-medium uppercase mb-1">Address</p>
-                  <p className="text-sm text-gray-800">
-                    {intake.applicant.addressStreet && <>{intake.applicant.addressStreet}<br /></>}
-                    {[intake.applicant.addressCity, intake.applicant.addressState, intake.applicant.addressZip]
-                      .filter(Boolean)
-                      .join(", ")}
-                  </p>
                 </div>
-              )}
-            </Section>
-          )}
-
-          {/* Household */}
-          <Section title={`HOUSEHOLD COMPOSITION (SNAP Household Size: ${(intake.householdMembers?.length || 0) + 1})`}>
-            {intake.applicant && (
-              <p className="text-sm">
-                <strong>Applicant:</strong> {intake.applicant.firstName} {intake.applicant.lastName}
-                {intake.applicant.dob && `, DOB ${new Date(intake.applicant.dob).toLocaleDateString()}`}
-                , Head of Household
-              </p>
-            )}
-            {intake.householdMembers?.map((m) => (
-              <div key={m.id} className="text-sm py-1">
-                <p>
-                  <strong>{m.firstName} {m.lastName}</strong>
-                  {m.dob && `, DOB ${new Date(m.dob).toLocaleDateString()}`}
-                  , {m.relationshipToApplicant}
-                </p>
-                <p className="text-xs text-gray-500 ml-4">
-                  {m.inSnapHousehold ? "In SNAP household" : "NOT in SNAP household"}
-                  {m.purchasesAndPreparesTogether !== undefined && (
-                    m.purchasesAndPreparesTogether ? " | Purchases & prepares food together" : " | Does NOT purchase & prepare food together"
-                  )}
-                  {m.isElderly && " | Elderly"}
-                  {m.isDisabled && " | Disabled"}
-                  {m.hasEarnedIncome && " | Has earned income"}
-                  {m.hasUnearnedIncome && " | Has unearned income"}
-                </p>
-              </div>
-            ))}
+              ))}
+            </div>
           </Section>
+        )}
 
-          {/* Income */}
-          <Section title="INCOME">
-            {intake.incomeSources?.map((s) => (
-              <div key={s.id} className="text-sm py-1 border-b border-gray-50 last:border-0">
-                <p className="break-words">
-                  <strong>
+        {/* Household Composition */}
+        <Section title={`HOUSEHOLD COMPOSITION (SNAP Household Size: ${snapHouseholdSize})`}>
+          {intake.applicant && (
+            <div className="text-sm py-1">
+              <span className="font-medium">Applicant:</span>{" "}
+              {intake.applicant.firstName} {intake.applicant.lastName}
+              {intake.applicant.dob && `, DOB ${formatDate(intake.applicant.dob)}`}
+              , Head of Household
+            </div>
+          )}
+          {intake.householdMembers?.map((m) => (
+            <div key={m.id} className="text-sm py-1">
+              {m.firstName} {m.lastName}
+              {m.dob && `, DOB ${formatDate(m.dob)}`}
+              , {m.relationshipToApplicant}
+              {m.inSnapHousehold ? " \u2014 in SNAP household" : " \u2014 NOT in SNAP household"}
+              {m.isElderly && ` (elderly${m.dob ? `, age ${calculateAge(m.dob)}` : ""})`}
+              {m.isDisabled && " (disabled)"}
+            </div>
+          ))}
+        </Section>
+
+        {/* Income */}
+        <Section title="INCOME">
+          {intake.incomeSources?.length > 0 ? (
+            <>
+              {intake.incomeSources.map((s) => (
+                <div key={s.id} className="text-sm py-1">
+                  <span className="font-medium">
                     {s.householdMember
                       ? `${s.householdMember.firstName} ${s.householdMember.lastName}`
-                      : "Applicant"}
-                  </strong>
-                  {" "} — {s.employerOrPayerName || s.incomeType}, {s.payFrequency.toLowerCase()} $
-                  {s.grossAmountPerPeriod.toFixed(2)} {"\u2192"} SNAP monthly: ${s.snapMonthlyAmount?.toFixed(2)}
+                      : intake.applicant ? `${intake.applicant.firstName} ${intake.applicant.lastName}` : "Applicant"}
+                  </span>
+                  {" \u2014 "}
+                  {s.employerOrPayerName || formatIncomeType(s.incomeType)}
+                  {s.employerOrPayerName && ` (${formatIncomeType(s.incomeType)})`}
+                  , {s.payFrequency.toLowerCase()} ${fmtCurrency(s.grossAmountPerPeriod)}
+                  {" \u2192 SNAP monthly: "}
+                  <span className="font-medium">${fmtCurrency(s.snapMonthlyAmount)}</span>
+                </div>
+              ))}
+              {eligibility && (
+                <div className="border-t border-gray-200 mt-2 pt-2 text-sm font-bold">
+                  Total Gross Monthly Income: ${fmtCurrency(eligibility.deductions?.grossIncome)}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-gray-500">No income sources reported</p>
+          )}
+        </Section>
+
+        {/* Deduction Calculation */}
+        {eligibility?.deductions && (
+          <Section title="DEDUCTION CALCULATION">
+            <div className="space-y-1 text-sm">
+              {eligibility.deductions.deductions.map((d, i) => (
+                <div key={i} className="flex justify-between py-0.5">
+                  <span className="text-gray-700">{d.notes || DEDUCTION_LABELS[d.type] || d.type}</span>
+                </div>
+              ))}
+              <div className="border-t border-gray-200 mt-2 pt-2 flex justify-between font-medium">
+                <span>Total Deductions</span>
+                <span>${fmtCurrency(eligibility.deductions.totalDeductions)}</span>
+              </div>
+              <div className="flex justify-between font-bold bg-gray-50 px-2 py-1 rounded">
+                <span>Net Monthly Income</span>
+                <span>${fmtCurrency(eligibility.deductions.netIncome)}</span>
+              </div>
+            </div>
+          </Section>
+        )}
+
+        {/* Eligibility Estimate */}
+        {eligibility && (
+          <Section title="ELIGIBILITY ESTIMATE">
+            <div className="space-y-2 text-sm">
+              {/* Gross income test */}
+              <div className={`rounded-lg p-3 ${eligibility.grossIncomeTest.passes ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
+                <p className={`font-medium ${eligibility.grossIncomeTest.passes ? "text-green-800" : "text-red-800"}`}>
+                  Gross income test ({eligibility.grossIncomeTest.bbcePercent || 130}% FPL for {eligibility.deductions.householdSize}):
+                  {" "}
+                  {eligibility.grossIncomeTest.skipped
+                    ? "SKIPPED \u2014 elderly/disabled household"
+                    : `$${fmtCurrency(eligibility.grossIncomeTest.grossIncome)} ${eligibility.grossIncomeTest.passes ? "\u2264" : ">"} $${eligibility.grossIncomeTest.limit}`}
+                  {" \u2014 "}
+                  {eligibility.grossIncomeTest.passes ? "PASSES" : "DOES NOT PASS"}
                 </p>
-                {s.incomeType === "SELF_EMPLOYMENT" && (
-                  <div className="ml-4 mt-1 text-xs text-gray-500 space-y-0.5">
-                    {s.selfEmploymentGross != null && <p>Gross self-employment: ${s.selfEmploymentGross.toFixed(2)}</p>}
-                    {s.selfEmploymentExpenses != null && <p>Business expenses: ${s.selfEmploymentExpenses.toFixed(2)}</p>}
-                    {s.selfEmploymentNet != null && <p>Net self-employment: ${s.selfEmploymentNet.toFixed(2)}</p>}
-                    {s.selfEmploymentDeductionMethod && <p>Deduction method: {s.selfEmploymentDeductionMethod}</p>}
-                  </div>
+                {eligibility.grossIncomeTest.skipped && (
+                  <p className="text-green-700 text-xs mt-1">{eligibility.grossIncomeTest.reason}</p>
                 )}
+              </div>
+
+              {/* Net income test */}
+              <div className={`rounded-lg p-3 ${eligibility.netIncomeTest.passes ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
+                <p className={`font-medium ${eligibility.netIncomeTest.passes ? "text-green-800" : "text-red-800"}`}>
+                  Net income test (100% FPL for {eligibility.deductions.householdSize}):
+                  {" "}
+                  ${fmtCurrency(eligibility.netIncomeTest.netIncome)} {eligibility.netIncomeTest.passes ? "\u2264" : ">"} ${eligibility.netIncomeTest.limit}
+                  {" \u2014 "}
+                  {eligibility.netIncomeTest.passes ? "PASSES" : "DOES NOT PASS"}
+                </p>
+                {!eligibility.netIncomeTest.passes && (
+                  <p className="text-red-700 text-xs mt-1">
+                    Net income exceeds limit by ${fmtCurrency(eligibility.netIncomeTest.netIncome - eligibility.netIncomeTest.limit)} &mdash; verify all deductions and income figures
+                  </p>
+                )}
+              </div>
+
+              {/* Benefit estimate */}
+              <div className={`rounded-lg p-3 ${eligibility.eligible ? "bg-green-50 border border-green-200" : "bg-gray-50 border border-gray-200"}`}>
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-gray-800">Estimated Monthly Benefit</span>
+                  <span className={`text-lg font-bold ${eligibility.eligible ? "text-green-700" : "text-gray-500"}`}>
+                    {eligibility.eligible
+                      ? `$${eligibility.benefitEstimate.estimatedBenefit}`
+                      : "Ineligible"}
+                  </span>
+                </div>
+                {eligibility.eligible && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Max allotment (${eligibility.benefitEstimate.maxAllotment}) - 30% of net income (${eligibility.benefitEstimate.expectedContribution})
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
+        )}
+
+        {/* Document Checklist */}
+        {intake.documentChecklist?.length > 0 && (
+          <Section title="DOCUMENT CHECKLIST">
+            <div className="space-y-1.5">
+              {intake.documentChecklist.map((doc, i) => (
+                <div key={i} className="flex items-start space-x-2 text-sm">
+                  <span className={`mt-0.5 ${doc.required ? "text-gray-800" : "text-gray-400"}`}>
+                    {doc.applicantConfirmedHas ? "\u2611" : "\u2610"}
+                  </span>
+                  <div>
+                    <span className="text-gray-800">{doc.documentType}</span>
+                    {doc.description && (
+                      <span className="text-gray-500"> &mdash; {doc.description}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Audit Trail */}
+        {auditTrail && (
+          <Section title="AUDIT TRAIL">
+            <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
+              <div className="text-gray-600">Intake started:</div>
+              <div className="text-gray-800">{new Date(auditTrail.intakeStarted).toLocaleString()}</div>
+
+              <div className="text-gray-600">Intake completed:</div>
+              <div className="text-gray-800">{new Date(auditTrail.intakeCompleted).toLocaleString()}</div>
+
+              <div className="text-gray-600">Duration:</div>
+              <div className="text-gray-800">{auditTrail.durationMinutes} minutes</div>
+
+              <div className="text-gray-600">Questions asked:</div>
+              <div className="text-gray-800">{auditTrail.questionsAsked}</div>
+
+              <div className="text-gray-600">Flags generated:</div>
+              <div className="text-gray-800">{auditTrail.flagsGenerated}</div>
+
+              <div className="text-gray-600">Applicant confirmed summary:</div>
+              <div className="text-gray-800">{auditTrail.applicantConfirmedSummary ? "Yes" : "No"}</div>
+            </div>
+          </Section>
+        )}
+
+        {/* Review History */}
+        {intake.reviews?.length > 0 && (
+          <Section title="REVIEW HISTORY">
+            {intake.reviews.map((r, i) => (
+              <div key={i} className="text-sm py-1 border-b border-gray-100 last:border-0">
+                <span className="font-medium">{r.caseworker?.name || "Caseworker"}</span>
+                {" \u2014 "}{new Date(r.reviewedAt).toLocaleString()}
+                {r.correctionsMade && (
+                  <span className="ml-2 text-orange-600 font-medium">
+                    Correction: {r.correctionType}
+                  </span>
+                )}
+                {r.notes && <p className="text-gray-500 mt-0.5">{r.notes}</p>}
               </div>
             ))}
           </Section>
+        )}
 
-          {/* Deductions */}
-          {intake.deductions?.length > 0 && (() => {
-            const grossIncome = intake.incomeSources?.reduce((s, i) => s + (i.snapMonthlyAmount || 0), 0) || 0;
-            const totalDeductions = intake.deductions.reduce((s, d) => s + d.amount, 0);
-            const netIncome = Math.max(0, grossIncome - totalDeductions);
-            return (
-              <IncomeCalculationDisplay
-                deductions={{
-                  grossIncome,
-                  netIncome,
-                  totalDeductions,
-                  deductions: intake.deductions.map((d) => ({
-                    type: d.deductionType,
-                    amount: d.amount,
-                    notes: d.calculationNotes,
-                  })),
-                }}
-              />
-            );
-          })()}
-
-          {/* Shelter Expenses — full breakdown */}
-          {intake.shelterExpense && (
-            <Section title="SHELTER EXPENSES">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-                <Field label="Rent / Mortgage" value={`$${Number(intake.shelterExpense.rentOrMortgage || 0).toFixed(2)}`} />
-                {intake.shelterExpense.propertyTax != null && (
-                  <Field label="Property Tax" value={`$${Number(intake.shelterExpense.propertyTax).toFixed(2)}`} />
-                )}
-                {intake.shelterExpense.homeownersInsurance != null && (
-                  <Field label="Homeowners Insurance" value={`$${Number(intake.shelterExpense.homeownersInsurance).toFixed(2)}`} />
-                )}
-                <Field
-                  label="Utility Type"
-                  value={formatUtilityType(intake.shelterExpense.utilityType)}
+        {/* Review form */}
+        {intake.status === "COMPLETED" && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6 print:hidden">
+            <h2 className="font-bold text-gray-700 mb-4">MARK AS REVIEWED</h2>
+            <div className="space-y-3">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={reviewForm.correctionsMade}
+                  onChange={(e) => setReviewForm({ ...reviewForm, correctionsMade: e.target.checked })}
+                  className="rounded"
                 />
                 {intake.shelterExpense.standardUtilityAllowance != null && (
                   <Field label="Standard Utility Allowance" value={`$${Number(intake.shelterExpense.standardUtilityAllowance).toFixed(2)}`} />
@@ -316,107 +388,11 @@ export default function IntakeDetail() {
             <ConversationLog logs={intake.conversationLogs} intakeId={intake.id} />
           )}
 
-          {/* Review History */}
-          {intake.reviews?.length > 0 && (
-            <Section title={`REVIEW HISTORY (${intake.reviews.length})`}>
-              {intake.reviews.map((review, i) => (
-                <div key={i} className="py-2 border-b border-gray-100 last:border-0">
-                  <div className="flex flex-col sm:flex-row sm:justify-between gap-1">
-                    <p className="text-sm">
-                      <strong>{review.caseworker?.name || "Unknown"}</strong>
-                      {review.correctionsMade && (
-                        <span className="ml-2 text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">
-                          Corrections: {review.correctionType || "General"}
-                        </span>
-                      )}
-                      {!review.correctionsMade && (
-                        <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
-                          No corrections
-                        </span>
-                      )}
-                    </p>
-                    <span className="text-xs text-gray-400">
-                      {review.reviewedAt ? new Date(review.reviewedAt).toLocaleString() : ""}
-                    </span>
-                  </div>
-                  {review.notes && (
-                    <p className="text-sm text-gray-600 mt-1 ml-0 sm:ml-4 italic">"{review.notes}"</p>
-                  )}
-                </div>
-              ))}
-            </Section>
-          )}
-
-          {/* Review form */}
-          {intake.status === "COMPLETED" && (
-            <section className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6" aria-label="Review intake">
-              <h2 className="font-bold text-gray-700 mb-4">MARK AS REVIEWED</h2>
-              <ErrorBanner message={reviewError} onRetry={submitReview} />
-              <div className="space-y-3">
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={reviewForm.correctionsMade}
-                    onChange={(e) => setReviewForm({ ...reviewForm, correctionsMade: e.target.checked })}
-                    className="rounded focus:ring-2 focus:ring-cushion-500"
-                    id="corrections-checkbox"
-                  />
-                  <span className="text-sm">Corrections were needed</span>
-                </label>
-
-                {reviewForm.correctionsMade && (
-                  <div>
-                    <label htmlFor="correction-type" className="block text-sm font-medium text-gray-700 mb-1">
-                      Correction Type
-                    </label>
-                    <select
-                      id="correction-type"
-                      value={reviewForm.correctionType}
-                      onChange={(e) => setReviewForm({ ...reviewForm, correctionType: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cushion-500"
-                    >
-                      <option value="">Select correction type</option>
-                      <option value="INCOME">Income</option>
-                      <option value="HOUSEHOLD">Household</option>
-                      <option value="DEDUCTION">Deduction</option>
-                      <option value="OTHER">Other</option>
-                    </select>
-                  </div>
-                )}
-
-                <div>
-                  <label htmlFor="review-notes" className="block text-sm font-medium text-gray-700 mb-1">
-                    Notes
-                  </label>
-                  <textarea
-                    id="review-notes"
-                    value={reviewForm.notes}
-                    onChange={(e) => setReviewForm({ ...reviewForm, notes: e.target.value })}
-                    placeholder="Optional notes about this review"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-20 focus:outline-none focus:ring-2 focus:ring-cushion-500"
-                  />
-                </div>
-
-                <button
-                  onClick={submitReview}
-                  disabled={reviewing}
-                  className="bg-green-600 text-white rounded-lg px-6 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                >
-                  {reviewing ? "Submitting..." : "Mark as Reviewed"}
-                </button>
-              </div>
-            </section>
-          )}
-
-          {intake.status === "REVIEWED" && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center" role="status">
-              <p className="text-green-800 font-medium">
-                <span aria-hidden="true">{"\u2713"} </span>
-                This intake has been reviewed
-              </p>
-            </div>
-          )}
-        </main>
+        {intake.status === "REVIEWED" && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center print:hidden">
+            <p className="text-green-800 font-medium">{"\u2713"} This intake has been reviewed</p>
+          </div>
+        )}
       </div>
     </>
   );
@@ -424,114 +400,43 @@ export default function IntakeDetail() {
 
 function Section({ title, children }) {
   return (
-    <section className="bg-white rounded-lg border border-gray-200 p-4" aria-label={title}>
-      <h2 className="font-bold text-gray-700 mb-2">{title}</h2>
-      <div className="space-y-1">{children}</div>
-    </section>
-  );
-}
-
-function Field({ label, value }) {
-  return (
-    <div className="flex justify-between text-sm py-0.5">
-      <span className="text-gray-500">{label}</span>
-      <span className="text-gray-800 text-right">{value}</span>
+    <div className="bg-white rounded-lg border border-gray-200 p-4">
+      <h2 className="font-bold text-gray-700 mb-3 text-sm uppercase tracking-wide">{title}</h2>
+      <div>{children}</div>
     </div>
   );
 }
 
-function formatCitizenship(status) {
+function formatDate(dateStr) {
+  return new Date(dateStr).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
+}
+
+function calculateAge(dob) {
+  const birth = new Date(dob);
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const monthDiff = now.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function fmtCurrency(val) {
+  if (val == null) return "0.00";
+  return Number(val).toFixed(2);
+}
+
+function formatIncomeType(type) {
   const labels = {
-    US_CITIZEN: "U.S. Citizen",
-    PERMANENT_RESIDENT: "Permanent Resident",
-    QUALIFIED_ALIEN: "Qualified Alien",
-    REFUGEE: "Refugee / Asylee",
+    EMPLOYMENT: "Wages/Salary",
+    SELF_EMPLOYMENT: "Self-Employment",
+    SSI: "SSI",
+    SSDI: "SSDI",
+    SOCIAL_SECURITY: "Social Security",
+    UNEMPLOYMENT: "Unemployment",
+    CHILD_SUPPORT_RECEIVED: "Child Support",
+    VA_BENEFITS: "VA Benefits",
+    PENSION: "Pension",
     OTHER: "Other",
   };
-  return labels[status] || status?.replace(/_/g, " ") || "Unknown";
-}
-
-function formatUtilityType(type) {
-  const labels = {
-    HEATING_COOLING: "Heating & Cooling",
-    BASIC: "Basic Utilities",
-    PHONE_ONLY: "Phone Only",
-    NONE: "None",
-  };
-  return labels[type] || type?.replace(/_/g, " ") || "Unknown";
-}
-
-function ConversationLog({ logs, intakeId }) {
-  const [expanded, setExpanded] = useState(false);
-  const sorted = [...logs].sort((a, b) => a.turnNumber - b.turnNumber);
-  const displayed = expanded ? sorted : sorted.slice(0, 6);
-
-  const handlePrint = () => {
-    const content = sorted
-      .map((l) => `[${new Date(l.timestamp).toLocaleString()}] ${l.role}: ${l.content}`)
-      .join("\n\n");
-    const win = window.open("", "_blank");
-    win.document.write(
-      `<html><head><title>Conversation Log — Intake #${intakeId.slice(0, 8).toUpperCase()}</title>` +
-      `<style>body{font-family:monospace;white-space:pre-wrap;padding:2rem;font-size:12px;line-height:1.6}` +
-      `h1{font-size:16px;margin-bottom:1rem}</style></head><body>` +
-      `<h1>Conversation Log — Intake #${intakeId.slice(0, 8).toUpperCase()}</h1>` +
-      `<p>Generated: ${new Date().toLocaleString()}</p><hr/>\n${content.replace(/</g, "&lt;").replace(/>/g, "&gt;")}` +
-      `</body></html>`
-    );
-    win.document.close();
-    win.print();
-  };
-
-  return (
-    <section className="bg-white rounded-lg border border-gray-200 p-4" aria-label="Conversation log">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
-        <h2 className="font-bold text-gray-700">CONVERSATION LOG ({sorted.length} messages)</h2>
-        <button
-          onClick={handlePrint}
-          className="text-xs text-cushion-600 hover:text-cushion-800 border border-cushion-300 rounded px-3 py-1 hover:bg-cushion-50 transition-colors focus:outline-none focus:ring-2 focus:ring-cushion-500 self-start"
-          aria-label="Print conversation log for audit file"
-        >
-          Print for Audit File
-        </button>
-      </div>
-      <p className="text-xs text-gray-500 mb-3">
-        Full AI-assisted intake transcript. Retained for audit and compliance purposes.
-      </p>
-      <div className="space-y-3 max-h-96 overflow-y-auto chat-scroll" role="log" aria-label="Conversation transcript">
-        {displayed.map((log) => (
-          <div key={log.turnNumber} className={`flex ${log.role === "USER" ? "justify-end" : "justify-start"}`}>
-            <div
-              className={`max-w-[85%] rounded-lg px-3 py-2 ${
-                log.role === "USER"
-                  ? "bg-cushion-50 border border-cushion-200"
-                  : log.role === "SYSTEM"
-                  ? "bg-gray-200 border border-gray-300 italic"
-                  : "bg-gray-50 border border-gray-200"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-gray-500">
-                  {log.role === "USER" ? "Applicant" : log.role === "SYSTEM" ? "System" : "AI Assistant"}
-                </span>
-                <span className="text-xs text-gray-400 ml-3">
-                  {new Date(log.timestamp).toLocaleTimeString()}
-                </span>
-              </div>
-              <p className="text-sm text-gray-800 whitespace-pre-wrap">{log.content}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-      {sorted.length > 6 && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="mt-3 text-sm text-cushion-600 hover:text-cushion-800 underline focus:outline-none focus:ring-2 focus:ring-cushion-500 rounded"
-          aria-expanded={expanded}
-        >
-          {expanded ? "Show less" : `Show all ${sorted.length} messages`}
-        </button>
-      )}
-    </section>
-  );
+  return labels[type] || type;
 }
