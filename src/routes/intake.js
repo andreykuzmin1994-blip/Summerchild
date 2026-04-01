@@ -16,6 +16,15 @@ const gatewayFields = require("../config/gateway-snap-fields.json");
 const prisma = new PrismaClient();
 const router = express.Router();
 
+// Queue number counter (resets daily in production; in-memory for demo)
+let queueCounter = 0;
+function generateQueueNumber() {
+  queueCounter += 1;
+  const letter = String.fromCharCode(65 + Math.floor((queueCounter - 1) / 100)); // A, B, C...
+  const num = String(((queueCounter - 1) % 100) + 1).padStart(4, "0");
+  return `${letter}-${num}`;
+}
+
 // In-memory session store (production: use Redis with TTL)
 const sessions = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -39,91 +48,28 @@ async function persistExtractedData(intakeId, dataBlock) {
   const field = dataBlock.field;
 
   switch (field) {
-    case "applicant_first_name":
-    case "applicant_last_name":
-    case "applicant_info": {
-      // Upsert applicant — may arrive across multiple turns
+    case "applicant_info":
+    case "applicant_language": {
+      // Only update language preference — no PII collected
       const existing = await prisma.applicant.findUnique({ where: { intakeId } });
-      const data = {
-        firstName: dataBlock.first_name || dataBlock.value || existing?.firstName || "",
-        lastName: dataBlock.last_name || existing?.lastName || "",
-        dob: dataBlock.dob ? new Date(dataBlock.dob) : existing?.dob || null,
-        ssnLastFour: dataBlock.ssn_last_four || existing?.ssnLastFour || null,
-        addressStreet: dataBlock.address_street || existing?.addressStreet || null,
-        addressCity: dataBlock.address_city || existing?.addressCity || null,
-        addressState: dataBlock.address_state || existing?.addressState || null,
-        addressZip: dataBlock.address_zip || existing?.addressZip || null,
-        phone: dataBlock.phone || existing?.phone || null,
-        email: dataBlock.email || existing?.email || null,
-        citizenshipStatus: dataBlock.citizenship_status || existing?.citizenshipStatus || null,
-        languagePreference: dataBlock.language || existing?.languagePreference || "en",
-      };
-      // Merge: only overwrite fields that have new values
-      if (field === "applicant_first_name") {
-        data.firstName = dataBlock.value;
-        data.lastName = existing?.lastName || "";
-      } else if (field === "applicant_last_name") {
-        data.firstName = existing?.firstName || "";
-        data.lastName = dataBlock.value;
-      }
-
-      if (existing) {
-        await prisma.applicant.update({ where: { intakeId }, data });
-      } else {
-        await prisma.applicant.create({ data: { intakeId, ...data } });
-      }
-      break;
-    }
-
-    case "applicant_dob": {
-      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
-      if (existing) {
-        await prisma.applicant.update({ where: { intakeId }, data: { dob: new Date(dataBlock.value) } });
-      }
-      break;
-    }
-
-    case "applicant_address": {
-      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
-      if (existing) {
+      if (existing && dataBlock.language) {
         await prisma.applicant.update({
           where: { intakeId },
-          data: {
-            addressStreet: dataBlock.street || existing.addressStreet,
-            addressCity: dataBlock.city || existing.addressCity,
-            addressState: dataBlock.state || existing.addressState || "GA",
-            addressZip: dataBlock.zip || existing.addressZip,
-          },
+          data: { languagePreference: dataBlock.language },
         });
       }
       break;
     }
 
-    case "applicant_phone": {
-      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
-      if (existing) {
-        await prisma.applicant.update({ where: { intakeId }, data: { phone: dataBlock.value } });
-      }
-      break;
-    }
-
-    case "applicant_citizenship": {
-      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
-      if (existing) {
-        await prisma.applicant.update({ where: { intakeId }, data: { citizenshipStatus: dataBlock.value } });
-      }
-      break;
-    }
-
     case "household_member": {
-      const dob = dataBlock.dob ? new Date(dataBlock.dob) : null;
-      const isElderly = dob ? (Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) >= 60 : false;
+      const isElderly = dataBlock.is_elderly || (dataBlock.age_range === "60+" || dataBlock.age_range === "60-69" || dataBlock.age_range === "70+");
       // Purchase-and-prepare determines SNAP household membership
       // Spouses and children under 22 are always in the SNAP household
       const relationship = (dataBlock.relationship || "").toLowerCase();
       const isSpouseOrYoungChild =
         relationship === "spouse" ||
-        (["child", "son", "daughter", "son/daughter"].includes(relationship) && dob && (Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) < 22);
+        (["child", "son", "daughter", "son/daughter"].includes(relationship) &&
+          dataBlock.age_range && (dataBlock.age_range.startsWith("0-") || dataBlock.age_range === "under 18"));
       const purchasesAndPrepares = dataBlock.purchases_and_prepares_together !== undefined
         ? dataBlock.purchases_and_prepares_together
         : true;
@@ -132,15 +78,14 @@ async function persistExtractedData(intakeId, dataBlock) {
       await prisma.householdMember.create({
         data: {
           intakeId,
-          firstName: dataBlock.first_name || "",
-          lastName: dataBlock.last_name || "",
-          dob,
+          displayName: dataBlock.display_name || `Member`,
+          ageRange: dataBlock.age_range || null,
           relationshipToApplicant: dataBlock.relationship || "",
           purchasesAndPreparesTogether: purchasesAndPrepares,
           inSnapHousehold,
           isElderly,
           isDisabled: dataBlock.is_disabled || false,
-          hasEarnedIncome: false, // Updated when income sources are added
+          hasEarnedIncome: false,
           hasUnearnedIncome: false,
         },
       });
@@ -172,8 +117,7 @@ async function persistExtractedData(intakeId, dataBlock) {
       if (dataBlock.member && dataBlock.member !== "applicant") {
         const members = await prisma.householdMember.findMany({ where: { intakeId } });
         const match = members.find((m) =>
-          m.firstName.toLowerCase() === (dataBlock.member || "").toLowerCase() ||
-          `${m.firstName} ${m.lastName}`.toLowerCase() === (dataBlock.member || "").toLowerCase()
+          m.displayName.toLowerCase() === (dataBlock.member || "").toLowerCase()
         );
         if (match) memberId = match.id;
       }
@@ -254,19 +198,44 @@ async function persistExtractedData(intakeId, dataBlock) {
     }
 
     case "dependent_care": {
-      // Store on the intake (used by SNAP calculator via intake.dependentCareExpense)
-      // Since Prisma schema doesn't have this as a direct field, store as a deduction note
-      // The SNAP calculator reads intake.dependentCareExpense
+      const amount = parseFloat(dataBlock.value) || 0;
+      if (amount > 0) {
+        await prisma.intake.update({
+          where: { id: intakeId },
+          data: { dependentCareExpense: amount },
+        });
+      }
       break;
     }
 
     case "medical_expenses": {
-      // Stored similarly — SNAP calculator reads intake.medicalExpenses
+      const amount = parseFloat(dataBlock.value) || 0;
+      if (amount > 0) {
+        await prisma.intake.update({
+          where: { id: intakeId },
+          data: { medicalExpenses: amount },
+        });
+      }
       break;
     }
 
     case "child_support_paid": {
-      // Stored similarly — SNAP calculator reads intake.childSupportPaid
+      const amount = parseFloat(dataBlock.value) || 0;
+      if (amount > 0) {
+        await prisma.intake.update({
+          where: { id: intakeId },
+          data: { childSupportPaid: amount },
+        });
+      }
+      break;
+    }
+
+    case "liquid_resources": {
+      const amount = parseFloat(dataBlock.value) || 0;
+      await prisma.intake.update({
+        where: { id: intakeId },
+        data: { liquidResources: amount },
+      });
       break;
     }
 
@@ -306,9 +275,9 @@ async function generateDocumentChecklist(intakeId) {
   // Income-based documents
   for (const source of intake.incomeSources || []) {
     const memberName = source.householdMember
-      ? `${source.householdMember.firstName} ${source.householdMember.lastName}`
+      ? source.householdMember.displayName
       : intake.applicant
-        ? `${intake.applicant.firstName} ${intake.applicant.lastName}`
+        ? intake.applicant.displayName
         : "Applicant";
 
     switch (source.incomeType) {
@@ -395,15 +364,14 @@ async function generateDocumentChecklist(intakeId) {
     });
   }
 
-  // Immigration documents
-  if (intake.applicant?.citizenshipStatus && intake.applicant.citizenshipStatus !== "US_CITIZEN") {
-    docs.push({
-      intakeId,
-      documentType: "Immigration documents",
-      description: "Permanent resident card, I-94, refugee/asylee documentation, or other proof of immigration status",
-      required: true,
-    });
-  }
+  // Immigration documents — caseworker collects citizenship status directly;
+  // always include as optional reminder
+  docs.push({
+    intakeId,
+    documentType: "Immigration documents (if applicable)",
+    description: "If not a U.S. citizen: permanent resident card, I-94, refugee/asylee documentation, or other proof of immigration status",
+    required: false,
+  });
 
   // Write all documents to DB (clear existing first to avoid duplicates on re-completion)
   await prisma.documentChecklist.deleteMany({ where: { intakeId } });
@@ -477,7 +445,8 @@ router.post("/start", async (req, res) => {
     const welcomeResponse = await sendMessage(
       [],
       systemPrompt,
-      `I'm here to apply for SNAP benefits. My name is ${displayName}.`
+      `I'm here to apply for SNAP benefits. My name is ${displayName}.`,
+      sessionToken
     );
 
     sessions.get(sessionToken).conversationHistory.push(
@@ -546,7 +515,8 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
     const aiResponse = await sendMessage(
       session.piiStripper.stripConversation(session.conversationHistory),
       session.systemPrompt,
-      strippedMessage
+      strippedMessage,
+      sessionToken
     );
 
     // Update conversation history
@@ -616,7 +586,7 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
 router.get("/:id/summary", async (req, res) => {
   try {
     const { id } = req.params;
-    const { sessionToken } = req.query;
+    const sessionToken = req.headers["x-session-token"] || req.query.sessionToken;
 
     const intake = await prisma.intake.findFirst({
       where: { id, ...(sessionToken ? { sessionToken } : {}) },

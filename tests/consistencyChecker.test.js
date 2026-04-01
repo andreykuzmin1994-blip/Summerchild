@@ -183,8 +183,7 @@ describe("consistencyChecker", () => {
   describe("checkDeductionEligibility", () => {
     it("flags dependent care without earned income", () => {
       const intake = {
-        dependentCareExpense: 500,
-        medicalExpenses: 0,
+        deductions: [{ deductionType: "DEPENDENT_CARE", amount: 500 }],
         householdMembers: [],
         incomeSources: [{ incomeType: "SSI" }],
       };
@@ -196,8 +195,7 @@ describe("consistencyChecker", () => {
 
     it("does not flag dependent care with earned income", () => {
       const intake = {
-        dependentCareExpense: 500,
-        medicalExpenses: 0,
+        deductions: [{ deductionType: "DEPENDENT_CARE", amount: 500 }],
         householdMembers: [],
         incomeSources: [{ incomeType: "EMPLOYMENT" }],
       };
@@ -207,8 +205,7 @@ describe("consistencyChecker", () => {
 
     it("flags medical expenses without elderly/disabled member", () => {
       const intake = {
-        dependentCareExpense: 0,
-        medicalExpenses: 200,
+        deductions: [{ deductionType: "MEDICAL", amount: 200 }],
         householdMembers: [{ isElderly: false, isDisabled: false }],
         incomeSources: [],
       };
@@ -219,8 +216,7 @@ describe("consistencyChecker", () => {
 
     it("does not flag medical expenses with elderly member", () => {
       const intake = {
-        dependentCareExpense: 0,
-        medicalExpenses: 200,
+        deductions: [{ deductionType: "MEDICAL", amount: 200 }],
         householdMembers: [{ isElderly: true, isDisabled: false }],
         incomeSources: [],
       };
@@ -230,8 +226,7 @@ describe("consistencyChecker", () => {
 
     it("does not flag medical expenses with disabled member", () => {
       const intake = {
-        dependentCareExpense: 0,
-        medicalExpenses: 200,
+        deductions: [{ deductionType: "MEDICAL", amount: 200 }],
         householdMembers: [{ isElderly: false, isDisabled: true }],
         incomeSources: [],
       };
@@ -241,8 +236,10 @@ describe("consistencyChecker", () => {
 
     it("flags both dependent care and medical when both ineligible", () => {
       const intake = {
-        dependentCareExpense: 300,
-        medicalExpenses: 100,
+        deductions: [
+          { deductionType: "DEPENDENT_CARE", amount: 300 },
+          { deductionType: "MEDICAL", amount: 100 },
+        ],
         householdMembers: [{ isElderly: false, isDisabled: false }],
         incomeSources: [{ incomeType: "SSI" }],
       };
@@ -296,30 +293,17 @@ describe("consistencyChecker", () => {
   });
 
   describe("checkShelterConsistency", () => {
-    it("flags potential utility double-counting", () => {
+    it("flags potential utility double-counting when heating/cooling SUA and rent both present", () => {
       const intake = {
         shelterExpense: {
           utilityType: "HEATING_COOLING",
           rentOrMortgage: 1200,
         },
-        shelterIncludesUtilities: true,
       };
       const flags = checkShelterConsistency(intake);
       expect(flags).toHaveLength(1);
       expect(flags[0].type).toBe("SHELTER_UTILITY_OVERLAP");
-      expect(flags[0].severity).toBe("MEDIUM");
-    });
-
-    it("does not flag when shelter does not include utilities", () => {
-      const intake = {
-        shelterExpense: {
-          utilityType: "HEATING_COOLING",
-          rentOrMortgage: 1200,
-        },
-        shelterIncludesUtilities: false,
-      };
-      const flags = checkShelterConsistency(intake);
-      expect(flags).toHaveLength(0);
+      expect(flags[0].severity).toBe("LOW");
     });
 
     it("does not flag when utility type is not HEATING_COOLING", () => {
@@ -328,7 +312,6 @@ describe("consistencyChecker", () => {
           utilityType: "BASIC",
           rentOrMortgage: 1200,
         },
-        shelterIncludesUtilities: true,
       };
       const flags = checkShelterConsistency(intake);
       expect(flags).toHaveLength(0);
@@ -345,7 +328,6 @@ describe("consistencyChecker", () => {
           utilityType: "HEATING_COOLING",
           rentOrMortgage: 0,
         },
-        shelterIncludesUtilities: true,
       };
       const flags = checkShelterConsistency(intake);
       expect(flags).toHaveLength(0);

@@ -155,7 +155,7 @@ function selectModel(userMessage) {
  * Send a message to Claude and get a response.
  * Uses prompt caching for the system prompt.
  */
-async function sendMessage(conversationHistory, systemPrompt, userMessage) {
+async function sendMessage(conversationHistory, systemPrompt, userMessage, sessionToken) {
   const model = selectModel(userMessage);
 
   const messages = [
@@ -163,9 +163,16 @@ async function sendMessage(conversationHistory, systemPrompt, userMessage) {
     { role: "user", content: userMessage },
   ];
 
+  // Hash session token for non-identifying metadata
+  const crypto = require("crypto");
+  const hashedSession = sessionToken
+    ? crypto.createHash("sha256").update(sessionToken).digest("hex").slice(0, 16)
+    : undefined;
+
   const response = await anthropic.messages.create({
     model,
     max_tokens: 1024,
+    metadata: hashedSession ? { user_id: hashedSession } : undefined,
     system: [
       {
         type: "text",

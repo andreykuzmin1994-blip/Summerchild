@@ -125,7 +125,7 @@ router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), a
     // Build CSV
     const headers = [
       "Intake ID", "Status", "Risk Score", "Expedited", "Created At",
-      "Applicant Name", "City", "State", "Citizenship",
+      "Applicant Display Name",
       "Household Size", "Gross Monthly Income", "Total Deductions", "Net Income",
       "Shelter Cost", "Reviewed By", "Reviewed At", "Corrections Made", "Correction Type",
     ];
@@ -140,10 +140,7 @@ router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), a
         i.riskScore || "",
         i.expeditedFlag ? "Yes" : "No",
         i.createdAt?.toISOString(),
-        i.applicant ? `${i.applicant.firstName} ${i.applicant.lastName}` : "",
-        i.applicant?.addressCity || "",
-        i.applicant?.addressState || "",
-        i.applicant?.citizenshipStatus || "",
+        i.applicant?.displayName || "",
         (i.householdMembers?.length || 0) + 1,
         gross.toFixed(2),
         totalDed.toFixed(2),

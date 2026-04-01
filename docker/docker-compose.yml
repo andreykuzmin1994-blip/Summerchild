@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cushion_gov
+      POSTGRES_USER: cushion
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cushion -d cushion_gov"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cushion:${DB_PASSWORD:-changeme}@db:5432/cushion_gov
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://cushion.county.internal}
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3000:3000"
+
+  # Run migrations and seed on first deploy
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cushion:${DB_PASSWORD:-changeme}@db:5432/cushion_gov
+    command: >
+      sh -c "npx prisma migrate deploy && npx prisma db seed"
+    profiles:
+      - setup
+
+volumes:
+  pgdata:

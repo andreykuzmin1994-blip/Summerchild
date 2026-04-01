@@ -274,6 +274,10 @@ model Intake {
   expeditedFlag    Boolean      @default(false) @map("expedited_flag")
   expeditedReason  String?      @map("expedited_reason")
   consistencyFlags Json?        @map("consistency_flags")
+  dependentCareExpense Float    @default(0) @map("dependent_care_expense")
+  medicalExpenses      Float    @default(0) @map("medical_expenses")
+  childSupportPaid     Float    @default(0) @map("child_support_paid")
+  liquidResources      Float    @default(0) @map("liquid_resources")
   caseworkerId     String?      @map("caseworker_id")
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
@@ -398,12 +402,13 @@ model ConversationLog {
 }
 
 model Caseworker {
-  id       String         @id @default(uuid())
-  countyId String         @map("county_id")
-  name     String
-  email    String         @unique
-  password String
-  role     CaseworkerRole @default(CASEWORKER)
+  id            String         @id @default(uuid())
+  countyId      String         @map("county_id")
+  name          String
+  email         String         @unique
+  password      String
+  role          CaseworkerRole @default(CASEWORKER)
+  deactivatedAt DateTime?      @map("deactivated_at")
 
   county   County         @relation(fields: [countyId], references: [id])
   intakes  Intake[]
