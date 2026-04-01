@@ -70,7 +70,7 @@ describe("AIProvider", () => {
   it("identifies failover-worthy errors correctly", () => {
     const provider = new AIProvider();
 
-    // Should failover
+    // Should failover — service errors
     expect(provider._isFailoverError({ status: 529 })).toBe(true);
     expect(provider._isFailoverError({ status: 503 })).toBe(true);
     expect(provider._isFailoverError({ status: 502 })).toBe(true);
@@ -79,10 +79,14 @@ describe("AIProvider", () => {
     expect(provider._isFailoverError({ code: "ECONNREFUSED" })).toBe(true);
     expect(provider._isFailoverError({ message: "request timeout" })).toBe(true);
 
-    // Should NOT failover (client errors)
-    expect(provider._isFailoverError({ status: 401 })).toBe(false);
-    expect(provider._isFailoverError({ status: 400 })).toBe(false);
-    expect(provider._isFailoverError({ status: 429 })).toBe(false);
+    // Should failover — auth errors (key revoked/expired mid-session,
+    // applicant at kiosk can't fix this)
+    expect(provider._isFailoverError({ status: 401 })).toBe(true);
+    expect(provider._isFailoverError({ status: 403 })).toBe(true);
+
+    // Should NOT failover
+    expect(provider._isFailoverError({ status: 400 })).toBe(false); // code bug
+    expect(provider._isFailoverError({ status: 429 })).toBe(false); // rate limit, temporary
   });
 
   it("logs failover events", () => {

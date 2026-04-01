@@ -98,22 +98,33 @@ class AIProvider {
   }
 
   /**
-   * Determine if an error is a transient/outage error worth failing over for.
+   * Determine if an error is worth failing over for.
+   * In a kiosk environment, keeping the session alive for the applicant
+   * takes priority — fail over on any error that the applicant can't fix.
    */
   _isFailoverError(error) {
-    // API errors indicating service issues (not client errors like auth)
+    // Service-level failures
     if (error.status === 529) return true; // Anthropic overloaded
     if (error.status === 503) return true; // Service unavailable
     if (error.status === 502) return true; // Bad gateway
     if (error.status === 500) return true; // Internal server error
     if (error.status === 408) return true; // Request timeout
+
+    // Auth failures — API key revoked, rotated, or expired mid-session.
+    // The applicant at the kiosk can't fix this, so fail over to keep
+    // the intake alive. The failover log alerts ops to fix the key.
+    if (error.status === 401) return true; // Unauthorized
+    if (error.status === 403) return true; // Forbidden
+
+    // Network-level failures
     if (error.code === "ECONNREFUSED") return true;
     if (error.code === "ETIMEDOUT") return true;
     if (error.code === "ENOTFOUND") return true;
     if (error.message && error.message.includes("timeout")) return true;
 
-    // Don't failover for client errors (auth, bad request, rate limit)
-    // Rate limit (429) is temporary — retry with same provider, not failover
+    // Don't failover for:
+    // 400 — bad request, likely a code bug that would hit both providers
+    // 429 — rate limit, temporary, retry same provider
     return false;
   }
 
