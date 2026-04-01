@@ -13,8 +13,20 @@ const { aiMessageLimiter } = require("../middleware/rateLimiter");
 const prisma = new PrismaClient();
 const router = express.Router();
 
-// In-memory session store (production: use Redis)
+// In-memory session store (production: use Redis with TTL)
 const sessions = new Map();
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+// Periodic cleanup of expired sessions
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions) {
+    if (now - session.lastActivity > SESSION_TTL_MS) {
+      sessions.delete(token);
+      console.log(`[SESSION CLEANUP] Expired session ${token.slice(0, 8)}...`);
+    }
+  }
+}, 60 * 1000); // Check every minute
 
 /**
  * POST /api/intake/start
@@ -43,6 +55,7 @@ router.post("/start", async (req, res) => {
       piiStripper: new PIIStripper(),
       turnNumber: 0,
       language: language || "en",
+      lastActivity: Date.now(),
     });
 
     await logAuditEvent({
@@ -103,6 +116,13 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
     if (!session) {
       return res.status(404).json({ error: "Session not found or expired" });
     }
+
+    // Check session timeout
+    if (Date.now() - session.lastActivity > SESSION_TTL_MS) {
+      sessions.delete(sessionToken);
+      return res.status(440).json({ error: "Session expired due to inactivity. Please start a new intake." });
+    }
+    session.lastActivity = Date.now();
 
     // Verify session matches intake
     const intake = await prisma.intake.findFirst({

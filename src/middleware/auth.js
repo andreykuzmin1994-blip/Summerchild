@@ -4,7 +4,10 @@ const { PrismaClient } = require("@prisma/client");
 
 const prisma = new PrismaClient();
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
+if (!process.env.JWT_SECRET) {
+  throw new Error("FATAL: JWT_SECRET environment variable is required. Server cannot start without it.");
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "8h";
 
 /**

@@ -59,6 +59,21 @@ if (process.env.NODE_ENV === "production") {
 // Startup validation
 async function startServer() {
   try {
+    // Validate required environment variables in production
+    const requiredEnvVars = ["DATABASE_URL", "JWT_SECRET"];
+    if (process.env.NODE_ENV === "production") {
+      requiredEnvVars.push("ANTHROPIC_API_KEY", "CORS_ORIGIN");
+    }
+    const missing = requiredEnvVars.filter((v) => !process.env[v]);
+    if (missing.length > 0) {
+      throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+    }
+
+    // Validate CORS_ORIGIN is not localhost in production
+    if (process.env.NODE_ENV === "production" && process.env.CORS_ORIGIN?.includes("localhost")) {
+      throw new Error("CORS_ORIGIN must not reference localhost in production");
+    }
+
     // Validate system prompt contains no PII
     if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !== "sk-ant-...") {
       const systemPrompt = await buildSystemPrompt("GA", 2026);
