@@ -4,7 +4,7 @@ export default function ReviewSummary({ summary, onConfirm, onEdit }) {
   const { intake, eligibility, consistency } = summary;
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-6">
       <h2 className="text-xl font-bold text-gray-800">Review Your Information</h2>
       <p className="text-sm text-gray-600">
         Please review the information below. If everything is correct, confirm to complete your intake.
@@ -39,7 +39,7 @@ export default function ReviewSummary({ summary, onConfirm, onEdit }) {
       {intake?.incomeSources?.length > 0 && (
         <Section title="Income Sources">
           {intake.incomeSources.map((s) => (
-            <div key={s.id} className="py-1 flex justify-between">
+            <div key={s.id} className="py-1 flex flex-col sm:flex-row sm:justify-between gap-1">
               <span>
                 {s.employerOrPayerName || s.incomeType}
                 <span className="text-gray-500 text-sm ml-1">({s.payFrequency.toLowerCase()})</span>
@@ -67,9 +67,9 @@ export default function ReviewSummary({ summary, onConfirm, onEdit }) {
 
       {/* Benefit Estimate */}
       {eligibility?.benefitEstimate && (
-        <div className="bg-cushion-50 rounded-lg p-4 border border-cushion-100">
+        <div className="bg-cushion-50 rounded-lg p-4 border border-cushion-100" role="status" aria-label="Estimated monthly benefit">
           <h3 className="font-bold text-cushion-800">Estimated Monthly Benefit</h3>
-          <p className="text-3xl font-bold text-cushion-700 mt-1">
+          <p className="text-3xl font-bold text-cushion-700 mt-1" aria-label={`${eligibility.benefitEstimate.estimatedBenefit} dollars per month`}>
             ${eligibility.benefitEstimate.estimatedBenefit}
           </p>
           <p className="text-xs text-gray-500 mt-1">
@@ -79,16 +79,16 @@ export default function ReviewSummary({ summary, onConfirm, onEdit }) {
       )}
 
       {/* Actions */}
-      <div className="flex space-x-3 pt-4">
+      <div className="flex flex-col sm:flex-row gap-3 pt-4">
         <button
           onClick={onConfirm}
-          className="flex-1 bg-green-600 text-white rounded-lg py-3 font-medium hover:bg-green-700 transition-colors"
+          className="flex-1 bg-green-600 text-white rounded-lg py-3 font-medium hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
         >
           I confirm this information is accurate
         </button>
         <button
           onClick={onEdit}
-          className="flex-1 border border-gray-300 text-gray-700 rounded-lg py-3 font-medium hover:bg-gray-50 transition-colors"
+          className="flex-1 border border-gray-300 text-gray-700 rounded-lg py-3 font-medium hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2"
         >
           I need to make a correction
         </button>

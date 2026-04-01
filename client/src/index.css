@@ -7,6 +7,35 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Global focus styles for keyboard navigation (ADA compliance) */
+*:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* Ensure minimum touch target size for mobile (WCAG 2.5.8) */
+@media (pointer: coarse) {
+  button, a, input, select, textarea {
+    min-height: 44px;
+  }
+}
+
+/* Respect user's reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* High contrast mode support */
+@media (forced-colors: active) {
+  .bg-cushion-600, .bg-green-500, .bg-red-500 {
+    forced-color-adjust: none;
+  }
+}
+
 /* Scrollbar styling for chat */
 .chat-scroll::-webkit-scrollbar {
   width: 6px;

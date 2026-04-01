@@ -7,20 +7,27 @@ export default function DocumentChecklist({ items }) {
       <p className="text-xs text-gray-600 mb-3">
         Please bring the following documents to your interview:
       </p>
-      <ul className="space-y-2">
+      <ul className="space-y-2" role="list">
         {items.map((item, i) => (
           <li key={i} className="flex items-start space-x-2">
-            <span className={`mt-0.5 ${item.required ? "text-red-500" : "text-gray-600"}`} aria-hidden="true">
+            <span
+              className={`mt-0.5 ${item.required ? "text-red-500" : "text-gray-400"}`}
+              aria-hidden="true"
+            >
               {item.applicantConfirmedHas ? "\u2611" : "\u2610"}
             </span>
             <div>
-              <span className="text-sm text-gray-800">{item.documentType}</span>
-              {item.applicantConfirmedHas && <span className="sr-only"> (confirmed)</span>}
+              <span className="text-sm text-gray-800">
+                {item.documentType}
+                <span className="sr-only">
+                  {item.applicantConfirmedHas ? " - applicant confirmed" : " - not yet confirmed"}
+                </span>
+              </span>
               {item.description && (
                 <p className="text-xs text-gray-600">{item.description}</p>
               )}
               {item.required && (
-                <span className="text-xs text-red-600 font-medium">Required</span>
+                <span className="text-xs text-red-500 font-medium" aria-label="This document is required">Required</span>
               )}
             </div>
           </li>
