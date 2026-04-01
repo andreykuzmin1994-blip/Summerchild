@@ -48,6 +48,14 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// AI provider health check (shows active provider, circuit breaker state, failover log)
+app.get("/api/health/ai", async (req, res) => {
+  const { aiProvider } = require("./services/aiProvider");
+  const status = await aiProvider.healthCheck();
+  status.recentFailovers = aiProvider.getFailoverLog();
+  res.json(status);
+});
+
 // Serve React frontend in production
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(path.join(__dirname, "../client/dist")));
