@@ -93,4 +93,91 @@ router.get("/audit-log", requireAuth, requireRole("ADMIN"), async (req, res) => 
   }
 });
 
+/**
+ * GET /api/admin/export/intakes
+ * Export intakes as CSV for reporting (supervisors and admins).
+ */
+router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), async (req, res) => {
+  try {
+    const { status, startDate, endDate } = req.query;
+    const where = { countyId: req.user.countyId };
+    if (status) where.status = status;
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
+    const intakes = await prisma.intake.findMany({
+      where,
+      include: {
+        applicant: true,
+        householdMembers: true,
+        incomeSources: true,
+        deductions: true,
+        shelterExpense: true,
+        reviews: { include: { caseworker: { select: { name: true } } } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+
+    // Build CSV
+    const headers = [
+      "Intake ID", "Status", "Risk Score", "Expedited", "Created At",
+      "Applicant Name", "City", "State", "Citizenship",
+      "Household Size", "Gross Monthly Income", "Total Deductions", "Net Income",
+      "Shelter Cost", "Reviewed By", "Reviewed At", "Corrections Made", "Correction Type",
+    ];
+
+    const rows = intakes.map((i) => {
+      const gross = i.incomeSources?.reduce((s, src) => s + (src.snapMonthlyAmount || 0), 0) || 0;
+      const totalDed = i.deductions?.reduce((s, d) => s + d.amount, 0) || 0;
+      const lastReview = i.reviews?.[i.reviews.length - 1];
+      return [
+        i.id,
+        i.status,
+        i.riskScore || "",
+        i.expeditedFlag ? "Yes" : "No",
+        i.createdAt?.toISOString(),
+        i.applicant ? `${i.applicant.firstName} ${i.applicant.lastName}` : "",
+        i.applicant?.addressCity || "",
+        i.applicant?.addressState || "",
+        i.applicant?.citizenshipStatus || "",
+        (i.householdMembers?.length || 0) + 1,
+        gross.toFixed(2),
+        totalDed.toFixed(2),
+        Math.max(0, gross - totalDed).toFixed(2),
+        i.shelterExpense?.totalShelterCost || "",
+        lastReview?.caseworker?.name || "",
+        lastReview?.reviewedAt?.toISOString() || "",
+        lastReview?.correctionsMade ? "Yes" : "No",
+        lastReview?.correctionType || "",
+      ];
+    });
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")),
+    ].join("\n");
+
+    const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
+    await logAuditEvent({
+      type: EVENTS.DATA_EXPORT,
+      actorType: ACTORS.ADMIN,
+      actorId: req.user.id,
+      countyId: req.user.countyId,
+      ip: req.ip,
+      details: { exportType: "intakes_csv", recordCount: intakes.length },
+    });
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="intakes-export-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csvContent);
+  } catch (error) {
+    console.error("[EXPORT]", error);
+    res.status(500).json({ error: "Failed to export data" });
+  }
+});
+
 module.exports = router;

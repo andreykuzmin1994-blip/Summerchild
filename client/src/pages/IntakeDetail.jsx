@@ -166,6 +166,44 @@ export default function IntakeDetail() {
             </section>
           )}
 
+          {/* Applicant Details */}
+          {intake.applicant && (
+            <Section title="APPLICANT INFORMATION">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                <Field label="Name" value={`${intake.applicant.firstName} ${intake.applicant.lastName}`} />
+                {intake.applicant.dob && (
+                  <Field label="Date of Birth" value={new Date(intake.applicant.dob).toLocaleDateString()} />
+                )}
+                {intake.applicant.ssnLastFour && (
+                  <Field label="SSN (last 4)" value={`***-**-${intake.applicant.ssnLastFour}`} />
+                )}
+                {intake.applicant.citizenshipStatus && (
+                  <Field label="Citizenship" value={formatCitizenship(intake.applicant.citizenshipStatus)} />
+                )}
+                {intake.applicant.languagePreference && (
+                  <Field label="Language" value={intake.applicant.languagePreference === "es" ? "Spanish" : "English"} />
+                )}
+                {intake.applicant.phone && (
+                  <Field label="Phone" value={intake.applicant.phone} />
+                )}
+                {intake.applicant.email && (
+                  <Field label="Email" value={intake.applicant.email} />
+                )}
+              </div>
+              {(intake.applicant.addressStreet || intake.applicant.addressCity) && (
+                <div className="mt-2 pt-2 border-t border-gray-100">
+                  <p className="text-xs text-gray-500 font-medium uppercase mb-1">Address</p>
+                  <p className="text-sm text-gray-800">
+                    {intake.applicant.addressStreet && <>{intake.applicant.addressStreet}<br /></>}
+                    {[intake.applicant.addressCity, intake.applicant.addressState, intake.applicant.addressZip]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </p>
+                </div>
+              )}
+            </Section>
+          )}
+
           {/* Household */}
           <Section title={`HOUSEHOLD COMPOSITION (SNAP Household Size: ${(intake.householdMembers?.length || 0) + 1})`}>
             {intake.applicant && (
@@ -176,27 +214,48 @@ export default function IntakeDetail() {
               </p>
             )}
             {intake.householdMembers?.map((m) => (
-              <p key={m.id} className="text-sm">
-                {m.firstName} {m.lastName}
-                {m.dob && `, DOB ${new Date(m.dob).toLocaleDateString()}`}
-                , {m.relationshipToApplicant}
-                {m.inSnapHousehold ? " — in SNAP household" : " — NOT in SNAP household"}
-                {m.isElderly && " (elderly)"}
-                {m.isDisabled && " (disabled)"}
-              </p>
+              <div key={m.id} className="text-sm py-1">
+                <p>
+                  <strong>{m.firstName} {m.lastName}</strong>
+                  {m.dob && `, DOB ${new Date(m.dob).toLocaleDateString()}`}
+                  , {m.relationshipToApplicant}
+                </p>
+                <p className="text-xs text-gray-500 ml-4">
+                  {m.inSnapHousehold ? "In SNAP household" : "NOT in SNAP household"}
+                  {m.purchasesAndPreparesTogether !== undefined && (
+                    m.purchasesAndPreparesTogether ? " | Purchases & prepares food together" : " | Does NOT purchase & prepare food together"
+                  )}
+                  {m.isElderly && " | Elderly"}
+                  {m.isDisabled && " | Disabled"}
+                  {m.hasEarnedIncome && " | Has earned income"}
+                  {m.hasUnearnedIncome && " | Has unearned income"}
+                </p>
+              </div>
             ))}
           </Section>
 
           {/* Income */}
           <Section title="INCOME">
             {intake.incomeSources?.map((s) => (
-              <p key={s.id} className="text-sm break-words">
-                {s.householdMember
-                  ? `${s.householdMember.firstName} ${s.householdMember.lastName}`
-                  : "Applicant"}{" "}
-                — {s.employerOrPayerName || s.incomeType}, {s.payFrequency.toLowerCase()} $
-                {s.grossAmountPerPeriod.toFixed(2)} {"\u2192"} SNAP monthly: ${s.snapMonthlyAmount?.toFixed(2)}
-              </p>
+              <div key={s.id} className="text-sm py-1 border-b border-gray-50 last:border-0">
+                <p className="break-words">
+                  <strong>
+                    {s.householdMember
+                      ? `${s.householdMember.firstName} ${s.householdMember.lastName}`
+                      : "Applicant"}
+                  </strong>
+                  {" "} — {s.employerOrPayerName || s.incomeType}, {s.payFrequency.toLowerCase()} $
+                  {s.grossAmountPerPeriod.toFixed(2)} {"\u2192"} SNAP monthly: ${s.snapMonthlyAmount?.toFixed(2)}
+                </p>
+                {s.incomeType === "SELF_EMPLOYMENT" && (
+                  <div className="ml-4 mt-1 text-xs text-gray-500 space-y-0.5">
+                    {s.selfEmploymentGross != null && <p>Gross self-employment: ${s.selfEmploymentGross.toFixed(2)}</p>}
+                    {s.selfEmploymentExpenses != null && <p>Business expenses: ${s.selfEmploymentExpenses.toFixed(2)}</p>}
+                    {s.selfEmploymentNet != null && <p>Net self-employment: ${s.selfEmploymentNet.toFixed(2)}</p>}
+                    {s.selfEmploymentDeductionMethod && <p>Deduction method: {s.selfEmploymentDeductionMethod}</p>}
+                  </div>
+                )}
+              </div>
             ))}
           </Section>
 
@@ -221,6 +280,32 @@ export default function IntakeDetail() {
             );
           })()}
 
+          {/* Shelter Expenses — full breakdown */}
+          {intake.shelterExpense && (
+            <Section title="SHELTER EXPENSES">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                <Field label="Rent / Mortgage" value={`$${Number(intake.shelterExpense.rentOrMortgage || 0).toFixed(2)}`} />
+                {intake.shelterExpense.propertyTax != null && (
+                  <Field label="Property Tax" value={`$${Number(intake.shelterExpense.propertyTax).toFixed(2)}`} />
+                )}
+                {intake.shelterExpense.homeownersInsurance != null && (
+                  <Field label="Homeowners Insurance" value={`$${Number(intake.shelterExpense.homeownersInsurance).toFixed(2)}`} />
+                )}
+                <Field
+                  label="Utility Type"
+                  value={formatUtilityType(intake.shelterExpense.utilityType)}
+                />
+                {intake.shelterExpense.standardUtilityAllowance != null && (
+                  <Field label="Standard Utility Allowance" value={`$${Number(intake.shelterExpense.standardUtilityAllowance).toFixed(2)}`} />
+                )}
+              </div>
+              <div className="mt-2 pt-2 border-t border-gray-200 flex justify-between text-sm font-bold">
+                <span>Total Shelter Cost</span>
+                <span>${Number(intake.shelterExpense.totalShelterCost || 0).toFixed(2)}</span>
+              </div>
+            </Section>
+          )}
+
           {/* Documents */}
           {intake.documentChecklist?.length > 0 && (
             <DocumentChecklist items={intake.documentChecklist} />
@@ -229,6 +314,37 @@ export default function IntakeDetail() {
           {/* Conversation Log — audit trail */}
           {intake.conversationLogs?.length > 0 && (
             <ConversationLog logs={intake.conversationLogs} intakeId={intake.id} />
+          )}
+
+          {/* Review History */}
+          {intake.reviews?.length > 0 && (
+            <Section title={`REVIEW HISTORY (${intake.reviews.length})`}>
+              {intake.reviews.map((review, i) => (
+                <div key={i} className="py-2 border-b border-gray-100 last:border-0">
+                  <div className="flex flex-col sm:flex-row sm:justify-between gap-1">
+                    <p className="text-sm">
+                      <strong>{review.caseworker?.name || "Unknown"}</strong>
+                      {review.correctionsMade && (
+                        <span className="ml-2 text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">
+                          Corrections: {review.correctionType || "General"}
+                        </span>
+                      )}
+                      {!review.correctionsMade && (
+                        <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
+                          No corrections
+                        </span>
+                      )}
+                    </p>
+                    <span className="text-xs text-gray-400">
+                      {review.reviewedAt ? new Date(review.reviewedAt).toLocaleString() : ""}
+                    </span>
+                  </div>
+                  {review.notes && (
+                    <p className="text-sm text-gray-600 mt-1 ml-0 sm:ml-4 italic">"{review.notes}"</p>
+                  )}
+                </div>
+              ))}
+            </Section>
           )}
 
           {/* Review form */}
@@ -313,6 +429,36 @@ function Section({ title, children }) {
       <div className="space-y-1">{children}</div>
     </section>
   );
+}
+
+function Field({ label, value }) {
+  return (
+    <div className="flex justify-between text-sm py-0.5">
+      <span className="text-gray-500">{label}</span>
+      <span className="text-gray-800 text-right">{value}</span>
+    </div>
+  );
+}
+
+function formatCitizenship(status) {
+  const labels = {
+    US_CITIZEN: "U.S. Citizen",
+    PERMANENT_RESIDENT: "Permanent Resident",
+    QUALIFIED_ALIEN: "Qualified Alien",
+    REFUGEE: "Refugee / Asylee",
+    OTHER: "Other",
+  };
+  return labels[status] || status?.replace(/_/g, " ") || "Unknown";
+}
+
+function formatUtilityType(type) {
+  const labels = {
+    HEATING_COOLING: "Heating & Cooling",
+    BASIC: "Basic Utilities",
+    PHONE_ONLY: "Phone Only",
+    NONE: "None",
+  };
+  return labels[type] || type?.replace(/_/g, " ") || "Unknown";
 }
 
 function ConversationLog({ logs, intakeId }) {

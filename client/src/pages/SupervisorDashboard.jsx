@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import ErrorBanner from "../components/ErrorBanner";
+import SkipLink from "../components/SkipLink";
 
 export default function SupervisorDashboard() {
   const [stats, setStats] = useState(null);
@@ -7,6 +9,7 @@ export default function SupervisorDashboard() {
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [exportLoading, setExportLoading] = useState(false);
   const navigate = useNavigate();
 
   const token = localStorage.getItem("token");
@@ -39,6 +42,7 @@ export default function SupervisorDashboard() {
         return;
       }
 
+      if (statsRes.status === 429 || intakesRes.status === 429) throw new Error("Too many requests. Please wait a moment.");
       if (!statsRes.ok) throw new Error("Failed to load statistics");
       if (!intakesRes.ok) throw new Error("Failed to load intakes");
 
@@ -52,6 +56,25 @@ export default function SupervisorDashboard() {
     setLoading(false);
   };
 
+  const handleExport = async () => {
+    setExportLoading(true);
+    try {
+      const res = await fetch("/api/admin/export/intakes", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.status === 401) { navigate("/login"); return; }
+      if (!res.ok) throw new Error("Failed to export data");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `intakes-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    }
+    setExportLoading(false);
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("caseworker");
@@ -59,13 +82,15 @@ export default function SupervisorDashboard() {
   };
 
   return (
+    <>
+    <SkipLink />
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-gray-800">Cushion Gov</h1>
           <p className="text-xs text-gray-500">Supervisor Dashboard</p>
         </div>
-        <div className="flex items-center space-x-4">
+        <nav className="flex items-center space-x-4" aria-label="User menu">
           <span className="text-sm text-gray-600 hidden sm:inline">{caseworker.name}</span>
           <Link to="/caseworker/dashboard" className="text-sm text-cushion-600 hover:text-cushion-800">
             Caseworker View
@@ -73,10 +98,10 @@ export default function SupervisorDashboard() {
           <button onClick={handleLogout} className="text-sm text-red-600 hover:text-red-800" aria-label="Sign out">
             Sign Out
           </button>
-        </div>
+        </nav>
       </header>
 
-      <div className="max-w-6xl mx-auto p-4 sm:p-6">
+      <main id="main-content" className="max-w-6xl mx-auto p-4 sm:p-6" role="main">
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6" role="alert">
             <p className="text-red-800 text-sm font-medium">Error loading data</p>
@@ -96,7 +121,17 @@ export default function SupervisorDashboard() {
             {/* County Stats Overview */}
             {stats && (
               <section aria-label="County statistics">
-                <h2 className="font-bold text-gray-700 mb-4 text-sm uppercase tracking-wide">County Performance</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wide">County Performance</h2>
+                  <button
+                    onClick={handleExport}
+                    disabled={exportLoading}
+                    className="text-sm border border-cushion-300 text-cushion-700 rounded-lg px-4 py-2 hover:bg-cushion-50 disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 focus:ring-cushion-500"
+                    aria-label="Export intakes as CSV"
+                  >
+                    {exportLoading ? "Exporting..." : "Export CSV"}
+                  </button>
+                </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
                   <StatCard label="Total Intakes" value={stats.totalIntakes || 0} />
                   <StatCard label="Completed" value={stats.completedIntakes || 0} />
@@ -108,15 +143,12 @@ export default function SupervisorDashboard() {
                   <StatCard label="Today" value={stats.intakesToday || 0} />
                   <StatCard label="This Week" value={stats.intakesThisWeek || 0} />
                   <StatCard label="This Month" value={stats.intakesThisMonth || 0} />
-                  <StatCard
-                    label="Completion Rate"
-                    value={stats.completionRate ? `${(stats.completionRate * 100).toFixed(0)}%` : "N/A"}
-                  />
+                  <StatCard label="Completion Rate" value={stats.completionRate || "N/A"} />
                 </div>
-                {stats.correctionRate !== undefined && (
+                {stats.correctionRate && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
                     <p className="text-sm text-yellow-800">
-                      <strong>Correction Rate:</strong> {(stats.correctionRate * 100).toFixed(1)}% of reviewed intakes required corrections
+                      <strong>Correction Rate:</strong> {stats.correctionRate} of reviewed intakes required corrections
                     </p>
                   </div>
                 )}
@@ -211,8 +243,9 @@ export default function SupervisorDashboard() {
             </section>
           </>
         )}
-      </div>
+      </main>
     </div>
+    </>
   );
 }
 

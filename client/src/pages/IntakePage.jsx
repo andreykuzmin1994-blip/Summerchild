@@ -1,11 +1,19 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import ChatInterface from "../components/ChatInterface";
 import ProgressBar from "../components/ProgressBar";
 import ReviewSummary from "../components/ReviewSummary";
 import ErrorBanner from "../components/ErrorBanner";
 import SkipLink from "../components/SkipLink";
+import SessionTimeoutWarning from "../components/SessionTimeoutWarning";
 
 const API_BASE = "/api/intake";
+
+function handleHttpError(res) {
+  if (res.status === 440) throw new Error("SESSION_EXPIRED");
+  if (res.status === 429) throw new Error("You're sending messages too quickly. Please wait a moment and try again.");
+  if (res.status >= 500) throw new Error("Our system is temporarily unavailable. Please try again in a moment.");
+  if (!res.ok) throw new Error("Something went wrong. Please try again.");
+}
 
 export default function IntakePage() {
   const [sessionToken, setSessionToken] = useState(null);
@@ -18,6 +26,12 @@ export default function IntakePage() {
   const [completed, setCompleted] = useState(false);
   const [language, setLanguage] = useState(null);
   const [error, setError] = useState(null);
+  const [lastActivity, setLastActivity] = useState(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  const handleSessionExpired = useCallback(() => {
+    setSessionExpired(true);
+  }, []);
 
   const startSession = async (selectedLanguage) => {
     setLanguage(selectedLanguage);
@@ -29,13 +43,15 @@ export default function IntakePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language: selectedLanguage }),
       });
-      if (!res.ok) throw new Error("Unable to start session. Please try again.");
+      handleHttpError(res);
       const data = await res.json();
       setSessionToken(data.sessionToken);
       setIntakeId(data.intakeId);
       setMessages([{ role: "assistant", content: data.message }]);
       setSection(data.section);
+      setLastActivity(Date.now());
     } catch (err) {
+      if (err.message === "SESSION_EXPIRED") { setSessionExpired(true); return; }
       setError(err.message);
       setLanguage(null);
     }
@@ -53,9 +69,10 @@ export default function IntakePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionToken, message: text }),
       });
-      if (!res.ok) throw new Error("Failed to send message. Please try again.");
+      handleHttpError(res);
       const data = await res.json();
 
+      setLastActivity(Date.now());
       setMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
       if (!data.blocked) {
         setSection(data.section);
@@ -64,6 +81,7 @@ export default function IntakePage() {
         }
       }
     } catch (err) {
+      if (err.message === "SESSION_EXPIRED") { setSessionExpired(true); return; }
       setError(err.message);
       setMessages((prev) => [
         ...prev,
@@ -77,11 +95,12 @@ export default function IntakePage() {
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/${intakeId}/summary?sessionToken=${sessionToken}`);
-      if (!res.ok) throw new Error("Failed to load your summary. Please try again.");
+      handleHttpError(res);
       const data = await res.json();
       setSummary(data);
       setShowReview(true);
     } catch (err) {
+      if (err.message === "SESSION_EXPIRED") { setSessionExpired(true); return; }
       setError(err.message);
     }
   };
@@ -94,9 +113,10 @@ export default function IntakePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionToken }),
       });
-      if (!res.ok) throw new Error("Failed to submit. Please try again.");
+      handleHttpError(res);
       setCompleted(true);
     } catch (err) {
+      if (err.message === "SESSION_EXPIRED") { setSessionExpired(true); return; }
       setError(err.message);
     }
   };
@@ -175,6 +195,7 @@ export default function IntakePage() {
     return (
       <>
         <SkipLink />
+        <SessionTimeoutWarning lastActivity={lastActivity} onExpired={handleSessionExpired} />
         <div className="min-h-screen bg-white">
           <ProgressBar currentSection="REVIEW" />
           <main id="main-content" role="main">
@@ -197,6 +218,7 @@ export default function IntakePage() {
   return (
     <>
       <SkipLink />
+      <SessionTimeoutWarning lastActivity={lastActivity} onExpired={handleSessionExpired} />
       <div className="h-screen flex flex-col bg-white">
         <ProgressBar currentSection={section} />
         <main id="main-content" className="flex-1 overflow-hidden" role="main">
