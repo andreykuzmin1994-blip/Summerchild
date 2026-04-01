@@ -28,6 +28,10 @@ export default function IntakePage() {
   const [error, setError] = useState(null);
   const [lastActivity, setLastActivity] = useState(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [nameStep, setNameStep] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [queueNumber, setQueueNumber] = useState(null);
 
   const handleSessionExpired = useCallback(() => {
     setSessionExpired(true);
@@ -123,7 +127,7 @@ export default function IntakePage() {
   const handleConfirm = async () => {
     setError(null);
     try {
-      await fetch(`${API_BASE}/${intakeId}/complete`, {
+      const res = await fetch(`${API_BASE}/${intakeId}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionToken }),

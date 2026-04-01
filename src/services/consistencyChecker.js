@@ -95,6 +95,7 @@ function checkDeductionEligibility(intake) {
   const flags = [];
   const members = intake.householdMembers || [];
   const incomeSources = intake.incomeSources || [];
+  const deductions = intake.deductions || [];
 
   const hasElderlyOrDisabled = members.some((m) => m.isElderly || m.isDisabled);
   const hasEarnedIncome = incomeSources.some(
@@ -102,7 +103,8 @@ function checkDeductionEligibility(intake) {
   );
 
   // Dependent care claimed but no earned income
-  if ((intake.dependentCareExpense || 0) > 0 && !hasEarnedIncome) {
+  const hasDependentCare = deductions.some((d) => d.deductionType === "DEPENDENT_CARE" && d.amount > 0);
+  if (hasDependentCare && !hasEarnedIncome) {
     flags.push({
       type: "DEDUCTION_ELIGIBILITY",
       severity: "HIGH",
@@ -113,7 +115,8 @@ function checkDeductionEligibility(intake) {
   }
 
   // Medical expenses claimed but no elderly/disabled member
-  if ((intake.medicalExpenses || 0) > 0 && !hasElderlyOrDisabled) {
+  const hasMedical = deductions.some((d) => d.deductionType === "MEDICAL" && d.amount > 0);
+  if (hasMedical && !hasElderlyOrDisabled) {
     flags.push({
       type: "DEDUCTION_ELIGIBILITY",
       severity: "HIGH",
@@ -170,18 +173,17 @@ function checkShelterConsistency(intake) {
 
   if (!shelter) return flags;
 
-  // If heating/cooling SUA claimed and rent is suspiciously high, flag potential double-counting
+  // If heating/cooling SUA claimed, remind caseworker to verify rent doesn't already include utilities
   if (
     shelter.utilityType === "HEATING_COOLING" &&
-    shelter.rentOrMortgage > 0 &&
-    intake.shelterIncludesUtilities
+    shelter.rentOrMortgage > 0
   ) {
     flags.push({
       type: "SHELTER_UTILITY_OVERLAP",
-      severity: "MEDIUM",
+      severity: "LOW",
       field: "shelter",
-      message: "Verify whether reported rent includes utilities to avoid double-counting with SUA",
-      suggestedAction: "Ask applicant if rent amount includes utility payments",
+      message: "Heating/cooling SUA claimed alongside rent — verify whether reported rent includes utilities to avoid double-counting",
+      suggestedAction: "Confirm with applicant that rent does not include utility payments",
     });
   }
 
