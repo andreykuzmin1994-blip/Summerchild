@@ -3,6 +3,7 @@ const { PrismaClient } = require("@prisma/client");
 const { requireAuth, requireRole, generateToken, comparePassword, hashPassword } = require("../middleware/auth");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { authLimiter } = require("../middleware/rateLimiter");
+const { calculateFullEligibility } = require("../services/snapCalculator");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -131,6 +132,28 @@ router.get("/intake/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Intake not found" });
     }
 
+    // Run eligibility calculations for the output packet
+    let eligibility = null;
+    if (intake.status !== "IN_PROGRESS") {
+      try {
+        eligibility = await calculateFullEligibility(intake);
+      } catch (err) {
+        console.error("[ELIGIBILITY CALC]", err);
+      }
+    }
+
+    // Build audit trail stats
+    const conversationCount = intake.conversationLogs?.filter((l) => l.role === "USER").length || 0;
+    const auditTrail = {
+      intakeStarted: intake.createdAt,
+      intakeCompleted: intake.updatedAt,
+      durationMinutes: Math.round((new Date(intake.updatedAt) - new Date(intake.createdAt)) / 60000),
+      questionsAsked: intake.conversationLogs?.filter((l) => l.role === "ASSISTANT").length || 0,
+      userResponses: conversationCount,
+      flagsGenerated: Array.isArray(intake.consistencyFlags) ? intake.consistencyFlags.length : 0,
+      applicantConfirmedSummary: intake.status !== "IN_PROGRESS",
+    };
+
     await logAuditEvent({
       type: EVENTS.CASEWORKER_VIEWED_INTAKE,
       actorType: ACTORS.CASEWORKER,
@@ -140,7 +163,7 @@ router.get("/intake/:id", requireAuth, async (req, res) => {
       ip: req.ip,
     });
 
-    res.json(intake);
+    res.json({ ...intake, eligibility, auditTrail });
   } catch (error) {
     console.error("[INTAKE DETAIL]", error);
     res.status(500).json({ error: "Failed to load intake" });
