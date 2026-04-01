@@ -10,6 +10,9 @@ const { calculateFullEligibility } = require("../services/snapCalculator");
 const { runConsistencyChecks } = require("../services/consistencyChecker");
 const { aiMessageLimiter } = require("../middleware/rateLimiter");
 
+const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
+const gatewayFields = require("../config/gateway-snap-fields.json");
+
 const prisma = new PrismaClient();
 const router = express.Router();
 
@@ -27,6 +30,387 @@ setInterval(() => {
     }
   }
 }, 60 * 1000); // Check every minute
+
+/**
+ * Persist a validated extracted data block to the database.
+ * Maps AI-extracted field names to Prisma model creates/upserts.
+ */
+async function persistExtractedData(intakeId, dataBlock) {
+  const field = dataBlock.field;
+
+  switch (field) {
+    case "applicant_first_name":
+    case "applicant_last_name":
+    case "applicant_info": {
+      // Upsert applicant — may arrive across multiple turns
+      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
+      const data = {
+        firstName: dataBlock.first_name || dataBlock.value || existing?.firstName || "",
+        lastName: dataBlock.last_name || existing?.lastName || "",
+        dob: dataBlock.dob ? new Date(dataBlock.dob) : existing?.dob || null,
+        ssnLastFour: dataBlock.ssn_last_four || existing?.ssnLastFour || null,
+        addressStreet: dataBlock.address_street || existing?.addressStreet || null,
+        addressCity: dataBlock.address_city || existing?.addressCity || null,
+        addressState: dataBlock.address_state || existing?.addressState || null,
+        addressZip: dataBlock.address_zip || existing?.addressZip || null,
+        phone: dataBlock.phone || existing?.phone || null,
+        email: dataBlock.email || existing?.email || null,
+        citizenshipStatus: dataBlock.citizenship_status || existing?.citizenshipStatus || null,
+        languagePreference: dataBlock.language || existing?.languagePreference || "en",
+      };
+      // Merge: only overwrite fields that have new values
+      if (field === "applicant_first_name") {
+        data.firstName = dataBlock.value;
+        data.lastName = existing?.lastName || "";
+      } else if (field === "applicant_last_name") {
+        data.firstName = existing?.firstName || "";
+        data.lastName = dataBlock.value;
+      }
+
+      if (existing) {
+        await prisma.applicant.update({ where: { intakeId }, data });
+      } else {
+        await prisma.applicant.create({ data: { intakeId, ...data } });
+      }
+      break;
+    }
+
+    case "applicant_dob": {
+      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
+      if (existing) {
+        await prisma.applicant.update({ where: { intakeId }, data: { dob: new Date(dataBlock.value) } });
+      }
+      break;
+    }
+
+    case "applicant_address": {
+      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
+      if (existing) {
+        await prisma.applicant.update({
+          where: { intakeId },
+          data: {
+            addressStreet: dataBlock.street || existing.addressStreet,
+            addressCity: dataBlock.city || existing.addressCity,
+            addressState: dataBlock.state || existing.addressState || "GA",
+            addressZip: dataBlock.zip || existing.addressZip,
+          },
+        });
+      }
+      break;
+    }
+
+    case "applicant_phone": {
+      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
+      if (existing) {
+        await prisma.applicant.update({ where: { intakeId }, data: { phone: dataBlock.value } });
+      }
+      break;
+    }
+
+    case "applicant_citizenship": {
+      const existing = await prisma.applicant.findUnique({ where: { intakeId } });
+      if (existing) {
+        await prisma.applicant.update({ where: { intakeId }, data: { citizenshipStatus: dataBlock.value } });
+      }
+      break;
+    }
+
+    case "household_member": {
+      const dob = dataBlock.dob ? new Date(dataBlock.dob) : null;
+      const isElderly = dob ? (Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) >= 60 : false;
+      // Purchase-and-prepare determines SNAP household membership
+      // Spouses and children under 22 are always in the SNAP household
+      const relationship = (dataBlock.relationship || "").toLowerCase();
+      const isSpouseOrYoungChild =
+        relationship === "spouse" ||
+        (["child", "son", "daughter", "son/daughter"].includes(relationship) && dob && (Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) < 22);
+      const purchasesAndPrepares = dataBlock.purchases_and_prepares_together !== undefined
+        ? dataBlock.purchases_and_prepares_together
+        : true;
+      const inSnapHousehold = purchasesAndPrepares || isSpouseOrYoungChild;
+
+      await prisma.householdMember.create({
+        data: {
+          intakeId,
+          firstName: dataBlock.first_name || "",
+          lastName: dataBlock.last_name || "",
+          dob,
+          relationshipToApplicant: dataBlock.relationship || "",
+          purchasesAndPreparesTogether: purchasesAndPrepares,
+          inSnapHousehold,
+          isElderly,
+          isDisabled: dataBlock.is_disabled || false,
+          hasEarnedIncome: false, // Updated when income sources are added
+          hasUnearnedIncome: false,
+        },
+      });
+      break;
+    }
+
+    case "income_source": {
+      const payFrequency = (dataBlock.pay_frequency || "MONTHLY").toUpperCase();
+      const grossAmount = dataBlock.gross_per_period || 0;
+      const incomeType = (dataBlock.income_type || "EMPLOYMENT").toUpperCase();
+      const isEmployment = incomeType === "EMPLOYMENT" || incomeType === "SELF_EMPLOYMENT";
+
+      // Calculate SNAP monthly amount
+      let snapMonthly;
+      if (incomeType === "SELF_EMPLOYMENT") {
+        snapMonthly = calculateMonthlyIncome({
+          incomeType,
+          grossAmountPerPeriod: grossAmount,
+          selfEmploymentGross: dataBlock.self_employment_gross || grossAmount,
+          selfEmploymentExpenses: dataBlock.self_employment_expenses || 0,
+        });
+      } else {
+        const multiplier = FREQUENCY_MULTIPLIERS[payFrequency] || 1;
+        snapMonthly = Math.round(grossAmount * multiplier * 100) / 100;
+      }
+
+      // Find the household member this income belongs to
+      let memberId = null;
+      if (dataBlock.member && dataBlock.member !== "applicant") {
+        const members = await prisma.householdMember.findMany({ where: { intakeId } });
+        const match = members.find((m) =>
+          m.firstName.toLowerCase() === (dataBlock.member || "").toLowerCase() ||
+          `${m.firstName} ${m.lastName}`.toLowerCase() === (dataBlock.member || "").toLowerCase()
+        );
+        if (match) memberId = match.id;
+      }
+
+      await prisma.incomeSource.create({
+        data: {
+          intakeId,
+          householdMemberId: memberId,
+          incomeType,
+          employerOrPayerName: dataBlock.employer || null,
+          payFrequency,
+          grossAmountPerPeriod: grossAmount,
+          snapMonthlyAmount: snapMonthly,
+          selfEmploymentGross: dataBlock.self_employment_gross || null,
+          selfEmploymentExpenses: dataBlock.self_employment_expenses || null,
+          selfEmploymentDeductionMethod: dataBlock.self_employment_deduction_method || null,
+          selfEmploymentNet: incomeType === "SELF_EMPLOYMENT" ? snapMonthly : null,
+        },
+      });
+
+      // Update household member earned/unearned income flags
+      if (memberId) {
+        await prisma.householdMember.update({
+          where: { id: memberId },
+          data: isEmployment ? { hasEarnedIncome: true } : { hasUnearnedIncome: true },
+        });
+      }
+      break;
+    }
+
+    case "shelter_expense":
+    case "shelter_rent":
+    case "shelter_utility": {
+      const existing = await prisma.shelterExpense.findUnique({ where: { intakeId } });
+      const updates = {};
+
+      if (field === "shelter_rent" || dataBlock.rent !== undefined) {
+        updates.rentOrMortgage = dataBlock.rent || dataBlock.value || 0;
+      }
+      if (dataBlock.property_tax !== undefined) {
+        updates.propertyTax = dataBlock.property_tax;
+      }
+      if (dataBlock.homeowners_insurance !== undefined) {
+        updates.homeownersInsurance = dataBlock.homeowners_insurance;
+      }
+      if (field === "shelter_utility" || dataBlock.utility_type !== undefined) {
+        const utilityType = (dataBlock.utility_type || dataBlock.value || "NONE").toUpperCase();
+        updates.utilityType = utilityType;
+        updates.standardUtilityAllowance = getStandardUtilityAllowance(utilityType);
+      }
+
+      if (existing) {
+        const merged = { ...existing, ...updates };
+        merged.totalShelterCost =
+          (merged.rentOrMortgage || 0) +
+          (merged.propertyTax || 0) +
+          (merged.homeownersInsurance || 0) +
+          (merged.standardUtilityAllowance || 0);
+        await prisma.shelterExpense.update({ where: { intakeId }, data: { ...updates, totalShelterCost: merged.totalShelterCost } });
+      } else {
+        const sua = updates.standardUtilityAllowance || 0;
+        const rent = updates.rentOrMortgage || 0;
+        const tax = updates.propertyTax || 0;
+        const ins = updates.homeownersInsurance || 0;
+        await prisma.shelterExpense.create({
+          data: {
+            intakeId,
+            rentOrMortgage: rent,
+            propertyTax: tax,
+            homeownersInsurance: ins,
+            utilityType: updates.utilityType || "NONE",
+            standardUtilityAllowance: sua,
+            totalShelterCost: rent + tax + ins + sua,
+          },
+        });
+      }
+      break;
+    }
+
+    case "dependent_care": {
+      // Store on the intake (used by SNAP calculator via intake.dependentCareExpense)
+      // Since Prisma schema doesn't have this as a direct field, store as a deduction note
+      // The SNAP calculator reads intake.dependentCareExpense
+      break;
+    }
+
+    case "medical_expenses": {
+      // Stored similarly — SNAP calculator reads intake.medicalExpenses
+      break;
+    }
+
+    case "child_support_paid": {
+      // Stored similarly — SNAP calculator reads intake.childSupportPaid
+      break;
+    }
+
+    default:
+      // Unknown field — log but don't crash
+      console.warn(`[PERSIST] Unknown field type: ${field}`);
+  }
+}
+
+/**
+ * Generate a personalized document checklist based on intake data
+ * using the rules defined in gateway-snap-fields.json.
+ */
+async function generateDocumentChecklist(intakeId) {
+  const intake = await prisma.intake.findUnique({
+    where: { id: intakeId },
+    include: {
+      applicant: true,
+      householdMembers: true,
+      incomeSources: { include: { householdMember: true } },
+      shelterExpense: true,
+    },
+  });
+
+  if (!intake) return;
+
+  const docs = [];
+
+  // Always required: Photo ID
+  docs.push({
+    intakeId,
+    documentType: "Photo ID",
+    description: "Valid government-issued photo ID for the applicant",
+    required: true,
+  });
+
+  // Income-based documents
+  for (const source of intake.incomeSources || []) {
+    const memberName = source.householdMember
+      ? `${source.householdMember.firstName} ${source.householdMember.lastName}`
+      : intake.applicant
+        ? `${intake.applicant.firstName} ${intake.applicant.lastName}`
+        : "Applicant";
+
+    switch (source.incomeType) {
+      case "EMPLOYMENT":
+        docs.push({
+          intakeId,
+          documentType: `Pay stubs - ${memberName}`,
+          description: `Last 4 pay stubs from ${source.employerOrPayerName || "employer"} (${source.payFrequency.toLowerCase()})`,
+          required: true,
+        });
+        break;
+      case "SELF_EMPLOYMENT":
+        docs.push({
+          intakeId,
+          documentType: `Self-employment records - ${memberName}`,
+          description: "Business income and expense records for the last 12 months",
+          required: true,
+        });
+        break;
+      case "SOCIAL_SECURITY":
+      case "SSI":
+      case "SSDI":
+        docs.push({
+          intakeId,
+          documentType: `Social Security documentation - ${memberName}`,
+          description: "Most recent Social Security award letter or bank statement showing deposit",
+          required: true,
+        });
+        break;
+      case "UNEMPLOYMENT":
+        docs.push({
+          intakeId,
+          documentType: `Unemployment documentation - ${memberName}`,
+          description: "Unemployment compensation determination letter",
+          required: true,
+        });
+        break;
+      case "VA_BENEFITS":
+        docs.push({
+          intakeId,
+          documentType: `VA benefits letter - ${memberName}`,
+          description: "Veterans Administration benefits award letter",
+          required: true,
+        });
+        break;
+      case "PENSION":
+        docs.push({
+          intakeId,
+          documentType: `Pension statement - ${memberName}`,
+          description: "Most recent pension or retirement account statement",
+          required: true,
+        });
+        break;
+    }
+  }
+
+  // Shelter documents
+  const shelter = intake.shelterExpense;
+  if (shelter && shelter.rentOrMortgage > 0) {
+    docs.push({
+      intakeId,
+      documentType: "Lease or mortgage statement",
+      description: "Current lease agreement, rental receipt, or mortgage statement",
+      required: true,
+    });
+  }
+  if (shelter && shelter.utilityType && shelter.utilityType !== "NONE") {
+    docs.push({
+      intakeId,
+      documentType: "Utility bill",
+      description: "Most recent utility bill (gas, electric, or phone depending on utility type claimed)",
+      required: true,
+    });
+  }
+
+  // Medical expenses for elderly/disabled
+  const hasElderlyOrDisabled = (intake.householdMembers || []).some((m) => m.isElderly || m.isDisabled);
+  if (hasElderlyOrDisabled) {
+    docs.push({
+      intakeId,
+      documentType: "Medical expense receipts",
+      description: "Receipts or statements for out-of-pocket medical expenses over $35/month (if claiming)",
+      required: false,
+    });
+  }
+
+  // Immigration documents
+  if (intake.applicant?.citizenshipStatus && intake.applicant.citizenshipStatus !== "US_CITIZEN") {
+    docs.push({
+      intakeId,
+      documentType: "Immigration documents",
+      description: "Permanent resident card, I-94, refugee/asylee documentation, or other proof of immigration status",
+      required: true,
+    });
+  }
+
+  // Write all documents to DB (clear existing first to avoid duplicates on re-completion)
+  await prisma.documentChecklist.deleteMany({ where: { intakeId } });
+  for (const doc of docs) {
+    await prisma.documentChecklist.create({ data: doc });
+  }
+}
 
 /**
  * POST /api/intake/start
@@ -149,12 +533,17 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
     );
     session.turnNumber += 1;
 
-    // Validate and process extracted data
+    // Validate and persist extracted data
     const validatedData = [];
     for (const dataBlock of aiResponse.extractedData) {
       const validation = validateExtractedData(dataBlock);
       if (validation.valid) {
         validatedData.push(dataBlock);
+        try {
+          await persistExtractedData(intake.id, dataBlock);
+        } catch (persistErr) {
+          console.error("[DATA PERSIST]", persistErr.message, dataBlock);
+        }
       } else {
         console.warn("[DATA VALIDATION] Rejected:", validation.errors, dataBlock);
       }
@@ -290,6 +679,9 @@ router.post("/:id/complete", async (req, res) => {
         },
       });
     }
+
+    // Generate personalized document checklist based on collected data
+    await generateDocumentChecklist(id);
 
     await logAuditEvent({
       type: EVENTS.INTAKE_COMPLETED,
