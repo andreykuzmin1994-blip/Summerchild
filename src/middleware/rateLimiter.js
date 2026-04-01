@@ -1,0 +1,30 @@
+const rateLimit = require("express-rate-limit");
+
+// General API rate limiter
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later" },
+});
+
+// Stricter limiter for AI message endpoints
+const aiMessageLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 15, // 15 messages per minute per session
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Please slow down — you can send up to 15 messages per minute" },
+});
+
+// Auth endpoint limiter (prevent brute force)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts, please try again later" },
+});
+
+module.exports = { apiLimiter, aiMessageLimiter, authLimiter };

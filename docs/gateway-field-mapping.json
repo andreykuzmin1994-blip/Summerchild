@@ -1,0 +1,87 @@
+{
+  "description": "Mapping of Georgia Gateway (gateway.ga.gov) and Form 297 SNAP fields to Cushion Gov data models",
+  "version": "1.0",
+  "lastUpdated": "2026-03-28",
+  "sections": {
+    "applicantInfo": {
+      "gatewayScreen": "Tell Us About the Applicant / Applicant Info",
+      "form297Section": "Section 1 — Applicant Information",
+      "fields": [
+        { "gatewayField": "First Name", "cushionModel": "Applicant", "cushionField": "firstName", "required": true },
+        { "gatewayField": "Last Name", "cushionModel": "Applicant", "cushionField": "lastName", "required": true },
+        { "gatewayField": "Date of Birth", "cushionModel": "Applicant", "cushionField": "dob", "required": true },
+        { "gatewayField": "SSN", "cushionModel": "Applicant", "cushionField": "ssnLastFour", "required": false, "note": "Only last 4 stored for display" },
+        { "gatewayField": "Street Address", "cushionModel": "Applicant", "cushionField": "addressStreet", "required": true },
+        { "gatewayField": "City", "cushionModel": "Applicant", "cushionField": "addressCity", "required": true },
+        { "gatewayField": "State", "cushionModel": "Applicant", "cushionField": "addressState", "required": true },
+        { "gatewayField": "ZIP Code", "cushionModel": "Applicant", "cushionField": "addressZip", "required": true },
+        { "gatewayField": "Phone Number", "cushionModel": "Applicant", "cushionField": "phone", "required": false },
+        { "gatewayField": "Email", "cushionModel": "Applicant", "cushionField": "email", "required": false },
+        { "gatewayField": "Citizenship/Immigration Status", "cushionModel": "Applicant", "cushionField": "citizenshipStatus", "required": true },
+        { "gatewayField": "Preferred Language", "cushionModel": "Applicant", "cushionField": "languagePreference", "required": false }
+      ]
+    },
+    "householdComposition": {
+      "gatewayScreen": "Household Composition",
+      "form297Section": "Section 2 — Household Members",
+      "fields": [
+        { "gatewayField": "Member First Name", "cushionModel": "HouseholdMember", "cushionField": "firstName", "required": true },
+        { "gatewayField": "Member Last Name", "cushionModel": "HouseholdMember", "cushionField": "lastName", "required": true },
+        { "gatewayField": "Member DOB", "cushionModel": "HouseholdMember", "cushionField": "dob", "required": true },
+        { "gatewayField": "Relationship to Applicant", "cushionModel": "HouseholdMember", "cushionField": "relationshipToApplicant", "required": true },
+        { "gatewayField": "Purchase and Prepare Together", "cushionModel": "HouseholdMember", "cushionField": "purchasesAndPreparesTogether", "required": true, "note": "Determines SNAP household membership" },
+        { "gatewayField": "Disability Status", "cushionModel": "HouseholdMember", "cushionField": "isDisabled", "required": false }
+      ]
+    },
+    "income": {
+      "gatewayScreen": "Income",
+      "form297Section": "Section 3 — Income",
+      "fields": [
+        { "gatewayField": "Income Type", "cushionModel": "IncomeSource", "cushionField": "incomeType", "required": true, "values": ["EMPLOYMENT", "SELF_EMPLOYMENT", "SSI", "SSDI", "SOCIAL_SECURITY", "UNEMPLOYMENT", "CHILD_SUPPORT_RECEIVED", "VA_BENEFITS", "PENSION", "OTHER"] },
+        { "gatewayField": "Employer/Payer Name", "cushionModel": "IncomeSource", "cushionField": "employerOrPayerName", "required": false },
+        { "gatewayField": "Pay Frequency", "cushionModel": "IncomeSource", "cushionField": "payFrequency", "required": true, "values": ["WEEKLY", "BIWEEKLY", "SEMI_MONTHLY", "MONTHLY"] },
+        { "gatewayField": "Gross Amount Per Period", "cushionModel": "IncomeSource", "cushionField": "grossAmountPerPeriod", "required": true }
+      ]
+    },
+    "selfEmployment": {
+      "gatewayScreen": "Income (Self-Employment sub-section)",
+      "form297Section": "Section 3 — Self-Employment",
+      "fields": [
+        { "gatewayField": "Gross Receipts", "cushionModel": "IncomeSource", "cushionField": "selfEmploymentGross", "required": true },
+        { "gatewayField": "Business Expenses", "cushionModel": "IncomeSource", "cushionField": "selfEmploymentExpenses", "required": false },
+        { "gatewayField": "Deduction Method", "cushionModel": "IncomeSource", "cushionField": "selfEmploymentDeductionMethod", "required": true, "values": ["ITEMIZED", "STANDARD_40_PCT"] }
+      ]
+    },
+    "shelterExpenses": {
+      "gatewayScreen": "Expenses — Shelter",
+      "form297Section": "Section 4 — Shelter Expenses",
+      "fields": [
+        { "gatewayField": "Rent or Mortgage", "cushionModel": "ShelterExpense", "cushionField": "rentOrMortgage", "required": true },
+        { "gatewayField": "Property Tax", "cushionModel": "ShelterExpense", "cushionField": "propertyTax", "required": false },
+        { "gatewayField": "Homeowners Insurance", "cushionModel": "ShelterExpense", "cushionField": "homeownersInsurance", "required": false },
+        { "gatewayField": "Utility Type", "cushionModel": "ShelterExpense", "cushionField": "utilityType", "required": true, "values": ["HEATING_COOLING", "BASIC", "PHONE_ONLY", "NONE"], "note": "Determines Standard Utility Allowance" }
+      ]
+    },
+    "dependentCare": {
+      "gatewayScreen": "Expenses — Dependent Care",
+      "form297Section": "Section 4 — Dependent Care",
+      "fields": [
+        { "gatewayField": "Child Care Cost", "cushionModel": "Intake", "cushionField": "dependentCareExpense", "required": false, "note": "Must be tied to work or training" }
+      ]
+    },
+    "medicalExpenses": {
+      "gatewayScreen": "Expenses — Medical",
+      "form297Section": "Section 4 — Medical Expenses",
+      "fields": [
+        { "gatewayField": "Out-of-Pocket Medical", "cushionModel": "Intake", "cushionField": "medicalExpenses", "required": false, "note": "Only for elderly/disabled members; only amount over $35/month" }
+      ]
+    },
+    "childSupport": {
+      "gatewayScreen": "Expenses — Child Support",
+      "form297Section": "Section 4 — Child Support Paid",
+      "fields": [
+        { "gatewayField": "Child Support Paid", "cushionModel": "Intake", "cushionField": "childSupportPaid", "required": false, "note": "Legally owed child support paid out" }
+      ]
+    }
+  }
+}
