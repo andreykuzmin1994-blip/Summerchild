@@ -1,0 +1,462 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// INHERITED MODELS (from consumer cushion repo — read-only reference)
+// ============================================================
+
+model State {
+  code           String   @id @db.VarChar(2)
+  name           String
+  population     Int?
+  hasIncomeTax   Boolean  @default(false) @map("has_income_tax")
+  notes          String?
+
+  snapConfig          SnapConfig?
+  unemploymentInsurance UnemploymentInsurance?
+  medicaidConfig      MedicaidConfig?
+  marketplaceConfig   MarketplaceConfig?
+  careerCenterConfig  CareerCenterConfig?
+  zipRanges           ZipRange[]
+  footnotes           Footnote[]
+
+  // Gov relations
+  counties       County[]
+
+  @@map("states")
+}
+
+model SnapConfig {
+  id              Int      @id @default(autoincrement())
+  stateCode       String   @unique @map("state_code") @db.VarChar(2)
+  bbce            Boolean  @default(false)
+  grossIncomePct  Int?     @map("gross_income_pct")
+  assetLimit      Int?     @map("asset_limit")
+  assetLimitElderly Int?   @map("asset_limit_elderly")
+  localProgramName String? @map("local_program_name")
+  notes           String?
+
+  state           State    @relation(fields: [stateCode], references: [code])
+
+  @@map("snap_configs")
+}
+
+model FederalSnapData {
+  id               Int    @id @default(autoincrement())
+  fiscalYear       Int    @map("fiscal_year")
+  householdSize    Int    @map("household_size")
+  grossIncomeLimit Int    @map("gross_income_limit")
+  netIncomeLimit   Int    @map("net_income_limit")
+  maxAllotment     Int    @map("max_allotment")
+  standardDeduction Int   @map("standard_deduction")
+
+  @@unique([fiscalYear, householdSize])
+  @@map("federal_snap_data")
+}
+
+model FederalPovertyLevel {
+  id              Int    @id @default(autoincrement())
+  year            Int
+  householdSize   Int    @map("household_size")
+  annualAmount    Int    @map("annual_amount")
+  context         String @default("BENEFITS") // MARKETPLACE or BENEFITS
+
+  @@unique([year, householdSize, context])
+  @@map("federal_poverty_levels")
+}
+
+model ObbbaProvision {
+  id              Int       @id @default(autoincrement())
+  provisionName   String    @map("provision_name")
+  description     String
+  effectiveDate   DateTime? @map("effective_date")
+  expirationDate  DateTime? @map("expiration_date")
+  affectedPrograms String[] @map("affected_programs")
+  exemptions      String?
+  notes           String?
+
+  @@map("obbba_provisions")
+}
+
+model UnemploymentInsurance {
+  id              Int     @id @default(autoincrement())
+  stateCode       String  @unique @map("state_code") @db.VarChar(2)
+  maxWeeklyBenefit Int?   @map("max_weekly_benefit")
+  minWeeklyBenefit Int?   @map("min_weekly_benefit")
+  maxWeeks        Int?    @map("max_weeks")
+  severanceRules  String? @map("severance_rules")
+  workSearchReq   Boolean @default(true) @map("work_search_req")
+  fraudPenalties  String? @map("fraud_penalties")
+  notes           String?
+
+  state           State   @relation(fields: [stateCode], references: [code])
+
+  @@map("unemployment_insurance")
+}
+
+model MedicaidConfig {
+  id              Int     @id @default(autoincrement())
+  stateCode       String  @unique @map("state_code") @db.VarChar(2)
+  expansionType   String? @map("expansion_type")
+  coverageGap     Boolean @default(false) @map("coverage_gap")
+  waiverDetails   String? @map("waiver_details")
+  obbbaWorkReqDate DateTime? @map("obbba_work_req_date")
+  notes           String?
+
+  state           State   @relation(fields: [stateCode], references: [code])
+
+  @@map("medicaid_configs")
+}
+
+model MarketplaceConfig {
+  id                Int     @id @default(autoincrement())
+  stateCode         String  @unique @map("state_code") @db.VarChar(2)
+  stateExchange     Boolean @default(false) @map("state_exchange")
+  individualMandate Boolean @default(false) @map("individual_mandate")
+  specialPrograms   String? @map("special_programs")
+  notes             String?
+
+  state             State   @relation(fields: [stateCode], references: [code])
+
+  @@map("marketplace_configs")
+}
+
+model CareerCenterConfig {
+  id              Int     @id @default(autoincrement())
+  stateCode       String  @unique @map("state_code") @db.VarChar(2)
+  centerName      String? @map("center_name")
+  details         String?
+  notes           String?
+
+  state           State   @relation(fields: [stateCode], references: [code])
+
+  @@map("career_center_configs")
+}
+
+model ZipRange {
+  id         Int    @id @default(autoincrement())
+  stateCode  String @map("state_code") @db.VarChar(2)
+  zipStart   String @map("zip_start") @db.VarChar(5)
+  zipEnd     String @map("zip_end") @db.VarChar(5)
+
+  state      State  @relation(fields: [stateCode], references: [code])
+
+  @@map("zip_ranges")
+}
+
+model AcaSubsidySchedule {
+  id              Int    @id @default(autoincrement())
+  year            Int
+  fplFloor        Int    @map("fpl_floor")
+  fplCeiling      Int    @map("fpl_ceiling")
+  contributionPct Float  @map("contribution_pct")
+  notes           String?
+
+  @@map("aca_subsidy_schedules")
+}
+
+model Footnote {
+  id         Int     @id @default(autoincrement())
+  stateCode  String? @map("state_code") @db.VarChar(2)
+  modelName  String  @map("model_name")
+  field      String?
+  note       String
+  source     String?
+
+  state      State?  @relation(fields: [stateCode], references: [code])
+
+  @@map("footnotes")
+}
+
+// ============================================================
+// GOV INTAKE MODELS (Phase 1 — 11 new models)
+// ============================================================
+
+enum IntakeStatus {
+  IN_PROGRESS
+  COMPLETED
+  REVIEWED
+  TRANSFERRED
+}
+
+enum RiskScore {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CitizenshipStatus {
+  US_CITIZEN
+  PERMANENT_RESIDENT
+  QUALIFIED_ALIEN
+  OTHER
+  UNDISCLOSED
+}
+
+enum IncomeType {
+  EMPLOYMENT
+  SELF_EMPLOYMENT
+  SSI
+  SSDI
+  SOCIAL_SECURITY
+  UNEMPLOYMENT
+  CHILD_SUPPORT_RECEIVED
+  VA_BENEFITS
+  PENSION
+  OTHER
+}
+
+enum PayFrequency {
+  WEEKLY
+  BIWEEKLY
+  SEMI_MONTHLY
+  MONTHLY
+}
+
+enum SelfEmploymentDeductionMethod {
+  ITEMIZED
+  STANDARD_40_PCT
+}
+
+enum DeductionType {
+  STANDARD
+  EARNED_INCOME_20PCT
+  DEPENDENT_CARE
+  MEDICAL
+  CHILD_SUPPORT_PAID
+  SHELTER_EXCESS
+}
+
+enum UtilityType {
+  HEATING_COOLING
+  BASIC
+  PHONE_ONLY
+  NONE
+}
+
+enum ConversationRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum CaseworkerRole {
+  CASEWORKER
+  SUPERVISOR
+  ADMIN
+}
+
+enum CorrectionType {
+  INCOME
+  HOUSEHOLD
+  DEDUCTION
+  OTHER
+}
+
+model County {
+  id        String   @id @default(uuid())
+  stateCode String   @map("state_code") @db.VarChar(2)
+  name      String
+  dfcsOffice String? @map("dfcs_office")
+
+  state       State        @relation(fields: [stateCode], references: [code])
+  intakes     Intake[]
+  caseworkers Caseworker[]
+
+  @@map("counties")
+}
+
+model Intake {
+  id               String       @id @default(uuid())
+  status           IntakeStatus @default(IN_PROGRESS)
+  countyId         String       @map("county_id")
+  sessionToken     String       @unique @map("session_token")
+  riskScore        RiskScore?   @map("risk_score")
+  expeditedFlag    Boolean      @default(false) @map("expedited_flag")
+  expeditedReason  String?      @map("expedited_reason")
+  consistencyFlags Json?        @map("consistency_flags")
+  caseworkerId     String?      @map("caseworker_id")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  county           County       @relation(fields: [countyId], references: [id])
+  caseworker       Caseworker?  @relation(fields: [caseworkerId], references: [id])
+  applicant        Applicant?
+  householdMembers HouseholdMember[]
+  incomeSources    IncomeSource[]
+  deductions       Deduction[]
+  shelterExpense   ShelterExpense?
+  documentChecklist DocumentChecklist[]
+  conversationLogs ConversationLog[]
+  reviews          IntakeReview[]
+  auditLogs        AuditLog[]
+
+  @@map("intakes")
+}
+
+model Applicant {
+  id                  String            @id @default(uuid())
+  intakeId            String            @unique @map("intake_id")
+  firstName           String            @map("first_name")
+  lastName            String            @map("last_name")
+  dob                 DateTime?
+  ssnLastFour         String?           @map("ssn_last_four") @db.VarChar(4)
+  addressStreet       String?           @map("address_street")
+  addressCity         String?           @map("address_city")
+  addressState        String?           @map("address_state") @db.VarChar(2)
+  addressZip          String?           @map("address_zip") @db.VarChar(5)
+  phone               String?
+  email               String?
+  citizenshipStatus   CitizenshipStatus? @map("citizenship_status")
+  languagePreference  String            @default("en") @map("language_preference")
+  isHeadOfHousehold   Boolean           @default(true) @map("is_head_of_household")
+
+  intake              Intake            @relation(fields: [intakeId], references: [id])
+
+  @@map("applicants")
+}
+
+model HouseholdMember {
+  id                          String   @id @default(uuid())
+  intakeId                    String   @map("intake_id")
+  firstName                   String   @map("first_name")
+  lastName                    String   @map("last_name")
+  dob                         DateTime?
+  relationshipToApplicant     String   @map("relationship_to_applicant")
+  purchasesAndPreparesTogether Boolean @default(true) @map("purchases_and_prepares_together")
+  inSnapHousehold             Boolean  @default(true) @map("in_snap_household")
+  isElderly                   Boolean  @default(false) @map("is_elderly")
+  isDisabled                  Boolean  @default(false) @map("is_disabled")
+  hasEarnedIncome             Boolean  @default(false) @map("has_earned_income")
+  hasUnearnedIncome           Boolean  @default(false) @map("has_unearned_income")
+
+  intake                      Intake   @relation(fields: [intakeId], references: [id])
+  incomeSources               IncomeSource[]
+
+  @@map("household_members")
+}
+
+model IncomeSource {
+  id                          String       @id @default(uuid())
+  intakeId                    String       @map("intake_id")
+  householdMemberId           String?      @map("household_member_id")
+  incomeType                  IncomeType   @map("income_type")
+  employerOrPayerName         String?      @map("employer_or_payer_name")
+  payFrequency                PayFrequency @map("pay_frequency")
+  grossAmountPerPeriod        Float        @map("gross_amount_per_period")
+  snapMonthlyAmount           Float?       @map("snap_monthly_amount")
+  selfEmploymentGross         Float?       @map("self_employment_gross")
+  selfEmploymentExpenses      Float?       @map("self_employment_expenses")
+  selfEmploymentDeductionMethod SelfEmploymentDeductionMethod? @map("self_employment_deduction_method")
+  selfEmploymentNet           Float?       @map("self_employment_net")
+
+  intake                      Intake           @relation(fields: [intakeId], references: [id])
+  householdMember             HouseholdMember? @relation(fields: [householdMemberId], references: [id])
+
+  @@map("income_sources")
+}
+
+model Deduction {
+  id               String        @id @default(uuid())
+  intakeId         String        @map("intake_id")
+  deductionType    DeductionType @map("deduction_type")
+  amount           Float
+  calculationNotes String?       @map("calculation_notes")
+
+  intake           Intake        @relation(fields: [intakeId], references: [id])
+
+  @@map("deductions")
+}
+
+model ShelterExpense {
+  id                      String      @id @default(uuid())
+  intakeId                String      @unique @map("intake_id")
+  rentOrMortgage          Float       @default(0) @map("rent_or_mortgage")
+  propertyTax             Float       @default(0) @map("property_tax")
+  homeownersInsurance     Float       @default(0) @map("homeowners_insurance")
+  utilityType             UtilityType @default(NONE) @map("utility_type")
+  standardUtilityAllowance Float     @default(0) @map("standard_utility_allowance")
+  totalShelterCost        Float       @default(0) @map("total_shelter_cost")
+
+  intake                  Intake      @relation(fields: [intakeId], references: [id])
+
+  @@map("shelter_expenses")
+}
+
+model DocumentChecklist {
+  id                    String  @id @default(uuid())
+  intakeId              String  @map("intake_id")
+  documentType          String  @map("document_type")
+  description           String
+  required              Boolean @default(true)
+  applicantConfirmedHas Boolean? @map("applicant_confirmed_has")
+
+  intake                Intake  @relation(fields: [intakeId], references: [id])
+
+  @@map("document_checklists")
+}
+
+model ConversationLog {
+  id         String           @id @default(uuid())
+  intakeId   String           @map("intake_id")
+  turnNumber Int              @map("turn_number")
+  role       ConversationRole
+  content    String
+  timestamp  DateTime         @default(now())
+
+  intake     Intake           @relation(fields: [intakeId], references: [id])
+
+  @@map("conversation_logs")
+}
+
+model Caseworker {
+  id       String         @id @default(uuid())
+  countyId String         @map("county_id")
+  name     String
+  email    String         @unique
+  password String
+  role     CaseworkerRole @default(CASEWORKER)
+
+  county   County         @relation(fields: [countyId], references: [id])
+  intakes  Intake[]
+  reviews  IntakeReview[]
+
+  @@map("caseworkers")
+}
+
+model IntakeReview {
+  id              String          @id @default(uuid())
+  intakeId        String          @map("intake_id")
+  caseworkerId    String          @map("caseworker_id")
+  correctionsMade Boolean         @default(false) @map("corrections_made")
+  correctionType  CorrectionType? @map("correction_type")
+  notes           String?
+  reviewedAt      DateTime        @default(now()) @map("reviewed_at")
+
+  intake          Intake          @relation(fields: [intakeId], references: [id])
+  caseworker      Caseworker      @relation(fields: [caseworkerId], references: [id])
+
+  @@map("intake_reviews")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  eventType  String   @map("event_type")
+  actorType  String   @map("actor_type")
+  actorId    String   @map("actor_id")
+  intakeId   String?  @map("intake_id")
+  countyId   String?  @map("county_id")
+  ipAddress  String?  @map("ip_address")
+  timestamp  DateTime @default(now())
+  details    Json?
+
+  intake     Intake?  @relation(fields: [intakeId], references: [id])
+
+  @@map("audit_logs")
+}

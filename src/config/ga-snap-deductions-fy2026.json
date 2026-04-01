@@ -1,0 +1,20 @@
+{
+  "stateCode": "GA",
+  "fiscalYear": 2026,
+  "standardUtilityAllowances": {
+    "HEATING_COOLING": 414,
+    "BASIC": 284,
+    "PHONE_ONLY": 55,
+    "NONE": 0
+  },
+  "shelterDeductionCap": 744,
+  "medicalDeductionThreshold": 35,
+  "standardMedicalDeduction": 161,
+  "earnedIncomeDeductionRate": 0.20,
+  "selfEmploymentStandardDeductionRate": 0.40,
+  "minimumBenefit": 24,
+  "minimumBenefitMaxHouseholdSize": 2,
+  "additionalMemberGrossIncomeIncrement": 566,
+  "additionalMemberNetIncomeIncrement": 436,
+  "additionalMemberAllotmentIncrement": 220
+}
