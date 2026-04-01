@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const path = require("path");
 const { apiLimiter } = require("./middleware/rateLimiter");
+const { ipAllowlistMiddleware } = require("./middleware/ipAllowlist");
 const { validateSystemPrompt } = require("./middleware/systemPromptValidator");
 const { buildSystemPrompt } = require("./services/aiAssistant");
 
@@ -35,6 +36,9 @@ app.use(cors({
 // Body parsing
 app.use(express.json({ limit: "10kb" }));
 
+// IP allowlist — restrict access to county network ranges
+app.use(ipAllowlistMiddleware);
+
 // Rate limiting
 app.use("/api", apiLimiter);
 
@@ -46,6 +50,14 @@ app.use("/api/admin", adminRoutes);
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// AI provider health check (shows active provider, circuit breaker state, failover log)
+app.get("/api/health/ai", async (req, res) => {
+  const { aiProvider } = require("./services/aiProvider");
+  const status = await aiProvider.healthCheck();
+  status.recentFailovers = aiProvider.getFailoverLog();
+  res.json(status);
 });
 
 // Serve React frontend in production

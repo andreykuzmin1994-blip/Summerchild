@@ -9,6 +9,7 @@ const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { runConsistencyChecks } = require("../services/consistencyChecker");
 const { aiMessageLimiter } = require("../middleware/rateLimiter");
+const { requireStaffPin } = require("../middleware/kioskAuth");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
 const gatewayFields = require("../config/gateway-snap-fields.json");
@@ -385,7 +386,7 @@ async function generateDocumentChecklist(intakeId) {
  * Start a new intake session. Returns session token, queue number, and welcome message.
  * Expects: { countyId, language, displayName } where displayName is "FirstName L." format.
  */
-router.post("/start", async (req, res) => {
+router.post("/start", requireStaffPin, async (req, res) => {
   try {
     const { countyId, language, displayName } = req.body;
 
@@ -439,6 +440,7 @@ router.post("/start", async (req, res) => {
       intakeId: intake.id,
       countyId: intake.countyId,
       ip: req.ip,
+      details: req.staffPinUsed ? { unlockedBy: req.staffPinUsed } : undefined,
     });
 
     // Send initial welcome message with applicant's first name
