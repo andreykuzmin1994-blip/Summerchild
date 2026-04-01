@@ -14,7 +14,7 @@ export default function ProgressBar({ currentSection }) {
       className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200"
       aria-label="Intake progress"
     >
-      <ol className="flex items-center w-full" role="list">
+      <ol className="flex items-center w-full">
         {SECTIONS.map((section, i) => {
           const isActive = i === currentIndex;
           const isComplete = i < currentIndex;

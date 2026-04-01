@@ -124,7 +124,7 @@ export default function IntakeDetail() {
           {intake.applicant && (
             <p className="text-sm">
               <strong>Applicant:</strong> {intake.applicant.displayName}
-              {" "}<span className="text-gray-400">({intake.queueNumber})</span>
+              {" "}<span className="text-gray-600">({intake.queueNumber})</span>
               , Head of Household
             </p>
           )}

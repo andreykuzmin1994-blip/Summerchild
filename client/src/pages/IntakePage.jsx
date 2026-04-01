@@ -186,7 +186,6 @@ export default function IntakePage() {
               aria-describedby={nameError ? "nameError nameDescription" : "nameDescription"}
               aria-invalid={nameError ? "true" : undefined}
               className="w-full border-2 border-gray-300 rounded-lg px-4 py-4 text-lg text-center focus:border-cushion-600 focus:ring-2 focus:ring-cushion-500 focus:outline-none"
-              autoFocus
             />
             {nameError && (
               <p id="nameError" className="text-red-600 text-sm" role="alert">
