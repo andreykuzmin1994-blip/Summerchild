@@ -1,28 +1,40 @@
 const { PrismaClient } = require("@prisma/client");
+const { child } = require("./logger");
+const { withRetry } = require("./dbRetry");
 
 const prisma = new PrismaClient();
+const log = child("audit");
 
 /**
  * Log an audit event to the immutable audit trail.
  * The audit_log table should have no UPDATE or DELETE permissions
  * for the application database user.
+ *
+ * County compliance: audit records are required for SNAP QC reviews
+ * (7 CFR 275.12). Retries on transient DB errors to prevent audit gaps.
  */
 async function logAuditEvent(event) {
   try {
-    await prisma.auditLog.create({
-      data: {
-        eventType: event.type,
-        actorType: event.actorType,
-        actorId: event.actorId,
-        intakeId: event.intakeId || null,
-        countyId: event.countyId || null,
-        ipAddress: event.ip || null,
-        details: event.details || null,
-      },
-    });
+    await withRetry(
+      () => prisma.auditLog.create({
+        data: {
+          eventType: event.type,
+          actorType: event.actorType,
+          actorId: event.actorId,
+          intakeId: event.intakeId || null,
+          countyId: event.countyId || null,
+          ipAddress: event.ip || null,
+          details: event.details || null,
+        },
+      }),
+      { context: "auditLog.create", maxRetries: 2 }
+    );
   } catch (error) {
     // Audit logging should never crash the application
-    console.error("[AUDIT] Failed to write audit log:", error.message);
+    log.error("Failed to write audit log", {
+      eventType: event.type,
+      error: error.message,
+    });
   }
 }
 

@@ -5,17 +5,21 @@ const { buildSystemPrompt, sendMessage, determineCurrentSection } = require("../
 const { PIIStripper } = require("../middleware/piiStripper");
 const { injectionGuardMiddleware } = require("../middleware/injectionGuard");
 const { validateExtractedData } = require("../services/dataValidator");
+const { validateAIResponse } = require("../services/aiResponseValidator");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { runConsistencyChecks } = require("../services/consistencyChecker");
 const { aiMessageLimiter } = require("../middleware/rateLimiter");
 const { requireStaffPin } = require("../middleware/kioskAuth");
+const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
+const { withRetry } = require("../services/dbRetry");
+const { child } = require("../services/logger");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
-const gatewayFields = require("../config/gateway-snap-fields.json");
 
 const prisma = new PrismaClient();
 const router = express.Router();
+const log = child("intake");
 
 // Queue number counter (resets daily in production; in-memory for demo)
 let queueCounter = 0;
@@ -25,21 +29,6 @@ function generateQueueNumber() {
   const num = String(((queueCounter - 1) % 100) + 1).padStart(4, "0");
   return `${letter}-${num}`;
 }
-
-// In-memory session store (production: use Redis with TTL)
-const sessions = new Map();
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
-
-// Periodic cleanup of expired sessions
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, session] of sessions) {
-    if (now - session.lastActivity > SESSION_TTL_MS) {
-      sessions.delete(token);
-      console.log(`[SESSION CLEANUP] Expired session ${token.slice(0, 8)}...`);
-    }
-  }
-}, 60 * 1000); // Check every minute
 
 /**
  * Persist a validated extracted data block to the database.
@@ -397,23 +386,29 @@ router.post("/start", requireStaffPin, async (req, res) => {
     const sessionToken = uuidv4();
     const queueNumber = generateQueueNumber();
 
-    const intake = await prisma.intake.create({
-      data: {
-        countyId: countyId || "dekalb-ga-001",
-        sessionToken,
-        queueNumber,
-        status: "IN_PROGRESS",
-      },
-    });
+    const intake = await withRetry(
+      () => prisma.intake.create({
+        data: {
+          countyId: countyId || "dekalb-ga-001",
+          sessionToken,
+          queueNumber,
+          status: "IN_PROGRESS",
+        },
+      }),
+      { context: "intake.create", correlationId: req.correlationId }
+    );
 
     // Create minimal applicant record (display name only — no PII)
-    await prisma.applicant.create({
-      data: {
-        intakeId: intake.id,
-        displayName,
-        languagePreference: language || "en",
-      },
-    });
+    await withRetry(
+      () => prisma.applicant.create({
+        data: {
+          intakeId: intake.id,
+          displayName,
+          languagePreference: language || "en",
+        },
+      }),
+      { context: "applicant.create", correlationId: req.correlationId }
+    );
 
     // Build system prompt and cache it for this session
     const systemPrompt = await buildSystemPrompt("GA", 2026);
@@ -423,7 +418,7 @@ router.post("/start", requireStaffPin, async (req, res) => {
     const firstName = displayName.split(" ")[0];
     if (firstName) piiStripper.addMapping(firstName, "[APPLICANT]");
 
-    sessions.set(sessionToken, {
+    await sessionStore.set(sessionToken, {
       intakeId: intake.id,
       systemPrompt,
       conversationHistory: [],
@@ -451,18 +446,29 @@ router.post("/start", requireStaffPin, async (req, res) => {
       sessionToken
     );
 
-    sessions.get(sessionToken).conversationHistory.push(
+    const session = await sessionStore.get(sessionToken);
+    session.conversationHistory.push(
       { role: "user", content: `I'm here to apply for SNAP benefits. My name is ${displayName}.` },
       { role: "assistant", content: welcomeResponse.rawMessage }
     );
-    sessions.get(sessionToken).turnNumber = 1;
+    session.turnNumber = 1;
+    await sessionStore.set(sessionToken, session);
 
     // Log the conversation turn
-    await prisma.conversationLog.createMany({
-      data: [
-        { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: `Intake session started — ${displayName} (${queueNumber})` },
-        { intakeId: intake.id, turnNumber: 1, role: "ASSISTANT", content: welcomeResponse.displayMessage },
-      ],
+    await withRetry(
+      () => prisma.conversationLog.createMany({
+        data: [
+          { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: `Intake session started — ${displayName} (${queueNumber})` },
+          { intakeId: intake.id, turnNumber: 1, role: "ASSISTANT", content: welcomeResponse.displayMessage },
+        ],
+      }),
+      { context: "conversationLog.create", correlationId: req.correlationId }
+    );
+
+    log.info("Intake session started", {
+      correlationId: req.correlationId,
+      intakeId: intake.id,
+      queueNumber,
     });
 
     res.json({
@@ -473,7 +479,10 @@ router.post("/start", requireStaffPin, async (req, res) => {
       section: "WELCOME",
     });
   } catch (error) {
-    console.error("[INTAKE START]", error);
+    log.error("Failed to start intake session", {
+      correlationId: req.correlationId,
+      error: error.message,
+    });
     res.status(500).json({ error: "Failed to start intake session" });
   }
 });
@@ -490,17 +499,17 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       return res.status(400).json({ error: "sessionToken and message are required" });
     }
 
-    const session = sessions.get(sessionToken);
+    const session = await sessionStore.get(sessionToken);
     if (!session) {
       return res.status(404).json({ error: "Session not found or expired" });
     }
 
     // Check session timeout
     if (Date.now() - session.lastActivity > SESSION_TTL_MS) {
-      sessions.delete(sessionToken);
+      await sessionStore.delete(sessionToken);
       return res.status(440).json({ error: "Session expired due to inactivity. Please start a new intake." });
     }
-    session.lastActivity = Date.now();
+    await sessionStore.touch(sessionToken);
 
     // Verify session matches intake
     const intake = await prisma.intake.findFirst({
@@ -527,30 +536,64 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       { role: "assistant", content: aiResponse.rawMessage }
     );
     session.turnNumber += 1;
+    await sessionStore.set(sessionToken, session);
 
-    // Validate and persist extracted data
+    // Validate extracted data with Zod schemas, then legacy validator, then persist
     const validatedData = [];
     for (const dataBlock of aiResponse.extractedData) {
-      const validation = validateExtractedData(dataBlock);
-      if (validation.valid) {
-        validatedData.push(dataBlock);
-        try {
-          await persistExtractedData(intake.id, dataBlock);
-        } catch (persistErr) {
-          console.error("[DATA PERSIST]", persistErr.message, dataBlock);
-        }
-      } else {
-        console.warn("[DATA VALIDATION] Rejected:", validation.errors, dataBlock);
+      // Layer 1: Zod schema validation (strict type/range checking)
+      const zodResult = validateAIResponse(dataBlock);
+      if (!zodResult.valid) {
+        log.warn("AI response Zod validation failed", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          field: dataBlock.field,
+          errors: zodResult.errors,
+        });
+        continue;
+      }
+
+      // Use Zod-cleaned data (with transforms applied)
+      const cleanedBlock = zodResult.data || dataBlock;
+
+      // Layer 2: Legacy business-rule validation
+      const legacyResult = validateExtractedData(cleanedBlock);
+      if (!legacyResult.valid) {
+        log.warn("AI response business validation failed", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          field: cleanedBlock.field,
+          errors: legacyResult.errors,
+        });
+        continue;
+      }
+
+      validatedData.push(cleanedBlock);
+      try {
+        await withRetry(
+          () => persistExtractedData(intake.id, cleanedBlock),
+          { context: "persistExtractedData", correlationId: req.correlationId }
+        );
+      } catch (persistErr) {
+        log.error("Data persistence failed", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          field: cleanedBlock.field,
+          error: persistErr.message,
+        });
       }
     }
 
     // Log conversation turns
-    await prisma.conversationLog.createMany({
-      data: [
-        { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: message },
-        { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: aiResponse.displayMessage },
-      ],
-    });
+    await withRetry(
+      () => prisma.conversationLog.createMany({
+        data: [
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: message },
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: aiResponse.displayMessage },
+        ],
+      }),
+      { context: "conversationLog.create", correlationId: req.correlationId }
+    );
 
     // Log AI API call
     await logAuditEvent({
@@ -576,7 +619,10 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       model: aiResponse.model,
     });
   } catch (error) {
-    console.error("[INTAKE MESSAGE]", error);
+    log.error("Failed to process message", {
+      correlationId: req.correlationId,
+      error: error.message,
+    });
     res.status(500).json({ error: "Failed to process message" });
   }
 });
@@ -590,18 +636,21 @@ router.get("/:id/summary", async (req, res) => {
     const { id } = req.params;
     const sessionToken = req.headers["x-session-token"] || req.query.sessionToken;
 
-    const intake = await prisma.intake.findFirst({
-      where: { id, ...(sessionToken ? { sessionToken } : {}) },
-      include: {
-        applicant: true,
-        householdMembers: true,
-        incomeSources: true,
-        deductions: true,
-        shelterExpense: true,
-        documentChecklist: true,
-        county: true,
-      },
-    });
+    const intake = await withRetry(
+      () => prisma.intake.findFirst({
+        where: { id, ...(sessionToken ? { sessionToken } : {}) },
+        include: {
+          applicant: true,
+          householdMembers: true,
+          incomeSources: true,
+          deductions: true,
+          shelterExpense: true,
+          documentChecklist: true,
+          county: true,
+        },
+      }),
+      { context: "intake.findFirst.summary", correlationId: req.correlationId }
+    );
 
     if (!intake) {
       return res.status(404).json({ error: "Intake not found" });
@@ -619,7 +668,11 @@ router.get("/:id/summary", async (req, res) => {
       consistency,
     });
   } catch (error) {
-    console.error("[INTAKE SUMMARY]", error);
+    log.error("Failed to generate summary", {
+      correlationId: req.correlationId,
+      intakeId: req.params.id,
+      error: error.message,
+    });
     res.status(500).json({ error: "Failed to generate summary" });
   }
 });
@@ -633,15 +686,18 @@ router.post("/:id/complete", async (req, res) => {
     const { id } = req.params;
     const { sessionToken } = req.body;
 
-    const intake = await prisma.intake.findFirst({
-      where: { id, sessionToken, status: "IN_PROGRESS" },
-      include: {
-        applicant: true,
-        householdMembers: true,
-        incomeSources: true,
-        shelterExpense: true,
-      },
-    });
+    const intake = await withRetry(
+      () => prisma.intake.findFirst({
+        where: { id, sessionToken, status: "IN_PROGRESS" },
+        include: {
+          applicant: true,
+          householdMembers: true,
+          incomeSources: true,
+          shelterExpense: true,
+        },
+      }),
+      { context: "intake.findFirst.complete", correlationId: req.correlationId }
+    );
 
     if (!intake) {
       return res.status(404).json({ error: "Active intake not found" });
@@ -652,27 +708,33 @@ router.post("/:id/complete", async (req, res) => {
     const consistency = await runConsistencyChecks(intake, eligibility);
 
     // Update intake with results
-    await prisma.intake.update({
-      where: { id },
-      data: {
-        status: "COMPLETED",
-        riskScore: consistency.riskScore,
-        expeditedFlag: eligibility.expedited.eligible,
-        expeditedReason: eligibility.expedited.reasons?.join("; ") || null,
-        consistencyFlags: consistency.flags,
-      },
-    });
+    await withRetry(
+      () => prisma.intake.update({
+        where: { id },
+        data: {
+          status: "COMPLETED",
+          riskScore: consistency.riskScore,
+          expeditedFlag: eligibility.expedited.eligible,
+          expeditedReason: eligibility.expedited.reasons?.join("; ") || null,
+          consistencyFlags: consistency.flags,
+        },
+      }),
+      { context: "intake.update.complete", correlationId: req.correlationId }
+    );
 
     // Save deductions to DB
     for (const ded of eligibility.deductions.deductions) {
-      await prisma.deduction.create({
-        data: {
-          intakeId: id,
-          deductionType: ded.type,
-          amount: ded.amount,
-          calculationNotes: ded.notes,
-        },
-      });
+      await withRetry(
+        () => prisma.deduction.create({
+          data: {
+            intakeId: id,
+            deductionType: ded.type,
+            amount: ded.amount,
+            calculationNotes: ded.notes,
+          },
+        }),
+        { context: "deduction.create", correlationId: req.correlationId }
+      );
     }
 
     // Generate personalized document checklist based on collected data
@@ -688,7 +750,15 @@ router.post("/:id/complete", async (req, res) => {
     });
 
     // Clean up session
-    sessions.delete(sessionToken);
+    await sessionStore.delete(sessionToken);
+
+    log.info("Intake completed", {
+      correlationId: req.correlationId,
+      intakeId: id,
+      riskScore: consistency.riskScore,
+      expedited: eligibility.expedited.eligible,
+      flagCount: consistency.flags.length,
+    });
 
     res.json({
       status: "COMPLETED",
@@ -698,7 +768,11 @@ router.post("/:id/complete", async (req, res) => {
       estimatedBenefit: eligibility.benefitEstimate.estimatedBenefit,
     });
   } catch (error) {
-    console.error("[INTAKE COMPLETE]", error);
+    log.error("Failed to complete intake", {
+      correlationId: req.correlationId,
+      intakeId: req.params.id,
+      error: error.message,
+    });
     res.status(500).json({ error: "Failed to complete intake" });
   }
 });

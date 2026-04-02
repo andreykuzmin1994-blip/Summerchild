@@ -1,5 +1,8 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const OpenAI = require("openai");
+const { child } = require("./logger");
+
+const cbLog = child("circuit-breaker");
 
 // Circuit breaker states
 const STATE = { CLOSED: "CLOSED", OPEN: "OPEN", HALF_OPEN: "HALF_OPEN" };
@@ -129,7 +132,8 @@ class AIProvider {
   }
 
   /**
-   * Log a failover event.
+   * Log a failover event and persist to audit log for observability.
+   * County compliance: all provider failures must be traceable for SLA reporting.
    */
   _logFailover(fromProvider, toProvider, error) {
     const entry = {
@@ -138,11 +142,66 @@ class AIProvider {
       to: toProvider,
       reason: error.message || "Unknown error",
       errorStatus: error.status || null,
+      circuitBreakerState: this.circuitBreaker.state,
+      failureCount: this.circuitBreaker.failureCount,
     };
     this.failoverLog.push(entry);
-    console.error(
-      `[AIProvider] FAILOVER: ${fromProvider} → ${toProvider} | Reason: ${entry.reason}`
+
+    // Keep failover log bounded
+    if (this.failoverLog.length > 100) {
+      this.failoverLog = this.failoverLog.slice(-50);
+    }
+
+    cbLog.error("AI provider failover", entry);
+
+    // Persist to audit log asynchronously (non-blocking)
+    try {
+      const { logAuditEvent, EVENTS, ACTORS } = require("./auditLogger");
+      logAuditEvent({
+        type: EVENTS.AI_API_CALL,
+        actorType: ACTORS.SYSTEM,
+        actorId: "circuit-breaker",
+        details: {
+          event: "FAILOVER",
+          ...entry,
+        },
+      }).catch(() => {
+        // Audit persistence failure should not affect AI provider operations
+      });
+    } catch {
+      // Ignore require/initialization errors during startup — non-critical path
+    }
+  }
+
+  /**
+   * Get circuit breaker metrics for observability dashboards.
+   * Returns aggregate stats useful for county SLA reporting.
+   */
+  getMetrics() {
+    const recentFailovers = this.failoverLog.slice(-50);
+    const last24h = recentFailovers.filter(
+      (e) => new Date(e.timestamp) > new Date(Date.now() - 24 * 60 * 60 * 1000)
     );
+
+    return {
+      activeProvider: this.activeProvider,
+      circuitBreaker: {
+        state: this.circuitBreaker.state,
+        failureCount: this.circuitBreaker.failureCount,
+        failureThreshold: this.circuitBreaker.failureThreshold,
+        resetTimeoutMs: this.circuitBreaker.resetTimeoutMs,
+        lastFailureTime: this.circuitBreaker.lastFailureTime
+          ? new Date(this.circuitBreaker.lastFailureTime).toISOString()
+          : null,
+      },
+      failoverStats: {
+        total: this.failoverLog.length,
+        last24Hours: last24h.length,
+        lastFailover: recentFailovers.length > 0
+          ? recentFailovers[recentFailovers.length - 1]
+          : null,
+      },
+    };
   }
 
   /**
