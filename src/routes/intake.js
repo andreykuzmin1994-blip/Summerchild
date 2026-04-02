@@ -14,13 +14,25 @@ const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
 const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
-const { sanitizeForDisplay, validateDataBlockCount, sanitizeAIResponse } = require("../middleware/outputSanitizer");
+const {
+  sanitizeForDisplay,
+  validateDataBlockCount,
+  sanitizeAIResponse,
+  checkTopicRelevance,
+  scanOutputForPII,
+  blockExfiltration,
+} = require("../middleware/outputSanitizer");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
 
 // Maximum conversation turns per intake session to prevent AI cost abuse.
 // A normal SNAP intake requires ~20 turns. 50 provides generous headroom.
 const MAX_CONVERSATION_TURNS = parseInt(process.env.MAX_CONVERSATION_TURNS || "50", 10);
+
+// Per-session token budget: max total tokens (input + output) consumed per session.
+// A typical SNAP intake uses ~15K input + 5K output tokens. 200K provides generous headroom
+// while still capping abuse from adversarial long conversations.
+const MAX_SESSION_TOKENS = parseInt(process.env.MAX_SESSION_TOKENS || "200000", 10);
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -429,6 +441,7 @@ router.post("/start", requireStaffPin, async (req, res) => {
       conversationHistory: [],
       piiStripper,
       turnNumber: 0,
+      totalTokensUsed: 0,
       language: language || "en",
       lastActivity: Date.now(),
     });
@@ -533,6 +546,18 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       });
     }
 
+    // Token budget enforcement: prevent cost abuse from long/complex conversations
+    if ((session.totalTokensUsed || 0) >= MAX_SESSION_TOKENS) {
+      log.warn("Session token budget exhausted", {
+        correlationId: req.correlationId,
+        intakeId: session.intakeId,
+        totalTokensUsed: session.totalTokensUsed,
+      });
+      return res.status(429).json({
+        error: "This session has used its allocated resources. Please complete your intake or start a new session.",
+      });
+    }
+
     await sessionStore.touch(sessionToken);
 
     // Verify session matches intake
@@ -554,7 +579,9 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       sessionToken
     );
 
-    // Validate AI response data block count (defense-in-depth against prompt injection)
+    // ── AI Output Guardrail Pipeline (OWASP LLM Top 10 2025 defense-in-depth) ──
+
+    // Guard 1: Data block count limit
     const blockCheck = validateDataBlockCount(aiResponse.rawMessage);
     if (!blockCheck.safe) {
       log.warn("Excessive CUSHION_DATA blocks in AI response — possible injection", {
@@ -562,7 +589,6 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
         intakeId: intake.id,
         dataBlockCount: blockCheck.count,
       });
-      // Strip the suspicious response and return a safe fallback
       return res.json({
         message: "I had trouble processing that. Could you repeat your answer?",
         section: determineCurrentSection(session.conversationHistory),
@@ -571,12 +597,79 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       });
     }
 
-    // Update conversation history
+    // Guard 2: Exfiltration blocker — strip markdown images, external URLs, long query params
+    const exfilCheck = blockExfiltration(aiResponse.displayMessage);
+    if (!exfilCheck.safe) {
+      log.warn("Exfiltration attempt blocked in AI response", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        threats: exfilCheck.threats,
+      });
+      aiResponse.displayMessage = exfilCheck.cleaned;
+    }
+
+    // Guard 3: Output PII scanner — catch any PII the model generates
+    const piiCheck = scanOutputForPII(aiResponse.displayMessage);
+    if (!piiCheck.clean) {
+      log.warn("PII detected in AI output — stripping before delivery", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        piiTypes: piiCheck.piiFound,
+      });
+      // Re-run the PII stripper on the output to redact
+      aiResponse.displayMessage = session.piiStripper.strip(aiResponse.displayMessage);
+      await logAuditEvent({
+        type: EVENTS.PII_STRIPPED,
+        actorType: ACTORS.SYSTEM,
+        actorId: "output-guardrail",
+        intakeId: intake.id,
+        details: { direction: "output", piiTypes: piiCheck.piiFound },
+      });
+    }
+
+    // Guard 4: Topic relevance — detect hijacked or off-topic responses
+    const topicCheck = checkTopicRelevance(aiResponse.displayMessage);
+    if (!topicCheck.onTopic) {
+      log.warn("Off-topic AI response detected — possible prompt injection success", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        topicScore: topicCheck.score,
+        reason: topicCheck.reason,
+      });
+      // Don't block, but flag for monitoring. The response may still be useful
+      // (e.g., the model answering a tangential but legitimate applicant question).
+    }
+
+    // Guard 5: Canary trip check (handled in aiAssistant.js — logged but double-check)
+    if (aiResponse.canaryTripped) {
+      log.error("Canary token leaked — system prompt exposed", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+      });
+      await logAuditEvent({
+        type: EVENTS.INJECTION_BLOCKED,
+        actorType: ACTORS.SYSTEM,
+        actorId: "canary-detector",
+        intakeId: intake.id,
+        details: { event: "CANARY_TOKEN_LEAKED", model: aiResponse.model },
+      });
+      return res.json({
+        message: aiResponse.displayMessage,
+        section: determineCurrentSection(session.conversationHistory),
+        extractedData: [],
+        model: aiResponse.model,
+      });
+    }
+
+    // Update conversation history and track token usage
     session.conversationHistory.push(
       { role: "user", content: message },
       { role: "assistant", content: sanitizeAIResponse(aiResponse.rawMessage) }
     );
     session.turnNumber += 1;
+    session.totalTokensUsed = (session.totalTokensUsed || 0) +
+      (aiResponse.usage?.input_tokens || 0) +
+      (aiResponse.usage?.output_tokens || 0);
     await sessionStore.set(sessionToken, session);
 
     // Validate extracted data with Zod schemas, then legacy validator, then persist
