@@ -368,6 +368,7 @@ describe("consistencyChecker", () => {
         householdMembers: [],
         incomeSources: [
           { incomeType: "EMPLOYMENT", snapMonthlyAmount: 1500 },
+          { incomeType: "CHILD_SUPPORT", snapMonthlyAmount: 200 },
         ],
         dependentCareExpense: 0,
         medicalExpenses: 0,
