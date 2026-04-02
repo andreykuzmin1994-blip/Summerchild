@@ -4,6 +4,8 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
 
+const { statsCache } = require("../services/queryCache");
+
 const prisma = new PrismaClient();
 const router = express.Router();
 const log = child("admin");
@@ -15,55 +17,60 @@ const log = child("admin");
 router.get("/stats", requireAuth, requireRole("SUPERVISOR", "ADMIN"), async (req, res) => {
   try {
     const countyId = req.user.countyId;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const weekAgo = new Date(today);
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    const monthAgo = new Date(today);
-    monthAgo.setDate(monthAgo.getDate() - 30);
 
-    const [
-      totalIntakes,
-      completedIntakes,
-      reviewedIntakes,
-      expeditedCount,
-      highRiskCount,
-      todayCount,
-      weekCount,
-      monthCount,
-      correctionCount,
-    ] = await Promise.all([
-      prisma.intake.count({ where: { countyId } }),
-      prisma.intake.count({ where: { countyId, status: "COMPLETED" } }),
-      prisma.intake.count({ where: { countyId, status: "REVIEWED" } }),
-      prisma.intake.count({ where: { countyId, expeditedFlag: true } }),
-      prisma.intake.count({ where: { countyId, riskScore: "HIGH" } }),
-      prisma.intake.count({ where: { countyId, createdAt: { gte: today } } }),
-      prisma.intake.count({ where: { countyId, createdAt: { gte: weekAgo } } }),
-      prisma.intake.count({ where: { countyId, createdAt: { gte: monthAgo } } }),
-      prisma.intakeReview.count({ where: { caseworker: { countyId }, correctionsMade: true } }),
-    ]);
+    const result = await statsCache.getOrCompute(`admin:${countyId}`, async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const weekAgo = new Date(today);
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const monthAgo = new Date(today);
+      monthAgo.setDate(monthAgo.getDate() - 30);
 
-    const completionRate = totalIntakes > 0
-      ? ((completedIntakes + reviewedIntakes) / totalIntakes * 100).toFixed(1)
-      : 0;
+      const [
+        totalIntakes,
+        completedIntakes,
+        reviewedIntakes,
+        expeditedCount,
+        highRiskCount,
+        todayCount,
+        weekCount,
+        monthCount,
+        correctionCount,
+      ] = await Promise.all([
+        prisma.intake.count({ where: { countyId } }),
+        prisma.intake.count({ where: { countyId, status: "COMPLETED" } }),
+        prisma.intake.count({ where: { countyId, status: "REVIEWED" } }),
+        prisma.intake.count({ where: { countyId, expeditedFlag: true } }),
+        prisma.intake.count({ where: { countyId, riskScore: "HIGH" } }),
+        prisma.intake.count({ where: { countyId, createdAt: { gte: today } } }),
+        prisma.intake.count({ where: { countyId, createdAt: { gte: weekAgo } } }),
+        prisma.intake.count({ where: { countyId, createdAt: { gte: monthAgo } } }),
+        prisma.intakeReview.count({ where: { caseworker: { countyId }, correctionsMade: true } }),
+      ]);
 
-    const correctionRate = (completedIntakes + reviewedIntakes) > 0
-      ? (correctionCount / (completedIntakes + reviewedIntakes) * 100).toFixed(1)
-      : 0;
+      const completionRate = totalIntakes > 0
+        ? ((completedIntakes + reviewedIntakes) / totalIntakes * 100).toFixed(1)
+        : 0;
 
-    res.json({
-      totalIntakes,
-      completedIntakes,
-      reviewedIntakes,
-      expeditedCount,
-      highRiskCount,
-      intakesToday: todayCount,
-      intakesThisWeek: weekCount,
-      intakesThisMonth: monthCount,
-      completionRate: `${completionRate}%`,
-      correctionRate: `${correctionRate}%`,
+      const correctionRate = (completedIntakes + reviewedIntakes) > 0
+        ? (correctionCount / (completedIntakes + reviewedIntakes) * 100).toFixed(1)
+        : 0;
+
+      return {
+        totalIntakes,
+        completedIntakes,
+        reviewedIntakes,
+        expeditedCount,
+        highRiskCount,
+        intakesToday: todayCount,
+        intakesThisWeek: weekCount,
+        intakesThisMonth: monthCount,
+        completionRate: `${completionRate}%`,
+        correctionRate: `${correctionRate}%`,
+      };
     });
+
+    res.json(result);
   } catch (error) {
     console.error("[ADMIN STATS]", error);
     res.status(500).json({ error: "Failed to load stats" });
@@ -124,13 +131,25 @@ router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), a
     const intakes = await withRetry(
       () => prisma.intake.findMany({
         where,
-        include: {
-          applicant: true,
-          householdMembers: true,
-          incomeSources: true,
-          deductions: true,
-          shelterExpense: true,
-          reviews: { include: { caseworker: { select: { name: true } } } },
+        select: {
+          id: true,
+          status: true,
+          riskScore: true,
+          expeditedFlag: true,
+          createdAt: true,
+          applicant: { select: { displayName: true } },
+          householdMembers: { select: { id: true } },
+          incomeSources: { select: { snapMonthlyAmount: true } },
+          deductions: { select: { amount: true } },
+          shelterExpense: { select: { totalShelterCost: true } },
+          reviews: {
+            select: {
+              reviewedAt: true,
+              correctionsMade: true,
+              correctionType: true,
+              caseworker: { select: { name: true } },
+            },
+          },
         },
         orderBy: { createdAt: "desc" },
         take: PAGE_SIZE,
