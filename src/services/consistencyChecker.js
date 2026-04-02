@@ -18,6 +18,7 @@ async function runConsistencyChecks(intake, calculations, fiscalYear = 2026) {
   flags.push(...checkPayFrequencyPlausibility(intake));
   flags.push(...checkMedicalExpenseReasonableness(intake));
   flags.push(...checkMultipleAdultsNoIncome(intake));
+  flags.push(...checkPossibleUnreportedBenefits(intake));
 
   const riskScore = deriveRiskScore(flags);
 
@@ -362,6 +363,87 @@ function checkMultipleAdultsNoIncome(intake) {
   return flags;
 }
 
+/**
+ * Flag working-age adults who report some income but may have additional
+ * unreported benefits (UI, workers' comp, alimony, TANF, informal income).
+ *
+ * Triggers when:
+ *   - Applicant (inferred from income sources with no memberId) has only
+ *     earned income but no unearned income, AND there are no unearned sources
+ *     at all in the household — common when someone lost a job and gets UI
+ *     but only reports their new part-time work.
+ *   - OR: any working-age adult in the household has exactly one income type
+ *     and no unearned income, combined with shelter costs suggesting more
+ *     income than reported.
+ *
+ * This is a "soft" MEDIUM flag — a prompt for the caseworker to ask about
+ * UI, workers' comp, alimony, TANF, and other benefit income.
+ */
+function checkPossibleUnreportedBenefits(intake) {
+  const flags = [];
+  const members = intake.householdMembers || [];
+  const incomeSources = intake.incomeSources || [];
+
+  // Check if any income exists at all
+  const hasAnyIncome = incomeSources.length > 0;
+
+  // Count working-age non-disabled/non-elderly adults in the SNAP household
+  const workingAgeAdults = members.filter((m) => {
+    if (!m.inSnapHousehold) return false;
+    if (m.ageRange === "under 18" || (m.ageRange && m.ageRange.startsWith("0-"))) return false;
+    if (m.isElderly || m.isDisabled) return false;
+    return true;
+  });
+
+  // The applicant themselves is not in householdMembers unless added as a
+  // phantom member (for elderly/disabled). Count the applicant as a working-age
+  // adult unless a phantom member marks them as elderly/disabled.
+  const applicantPhantom = members.find((m) => m.id === "__applicant__");
+  const applicantIsElderlyOrDisabled = applicantPhantom
+    ? (applicantPhantom.isElderly || applicantPhantom.isDisabled)
+    : false;
+
+  // Total working-age adults = explicit members + the implicit applicant
+  const totalWorkingAgeAdults = workingAgeAdults.length + (applicantIsElderlyOrDisabled ? 0 : 1);
+
+  // Check if the household has ONLY earned income and NO unearned income at all
+  const hasEarned = incomeSources.some(
+    (s) => s.incomeType === "EMPLOYMENT" || s.incomeType === "SELF_EMPLOYMENT"
+  );
+  const hasUnearned = incomeSources.some(
+    (s) => s.incomeType !== "EMPLOYMENT" && s.incomeType !== "SELF_EMPLOYMENT"
+  );
+
+  // Pattern 1: Working-age household with earned income but zero unearned income
+  // and at least one working-age adult. Common when someone loses a job,
+  // starts a part-time gig, and forgets to report UI/workers comp.
+  if (hasEarned && !hasUnearned && totalWorkingAgeAdults > 0) {
+    flags.push({
+      type: "POSSIBLE_UNREPORTED_BENEFITS",
+      severity: "MEDIUM",
+      field: "income",
+      message: "Household has earned income but no unearned income reported — ask about unemployment benefits, workers' compensation, alimony, child support, TANF, or other benefit income",
+      suggestedAction: "Ask: 'Does anyone in the household receive unemployment, workers comp, disability insurance, alimony, TANF, or regular help from family?'",
+    });
+  }
+
+  // Pattern 2: Zero total income but the applicant is working-age and
+  // not disabled/elderly — very likely receiving UI, workers comp, or TANF
+  // that they didn't report. (ZERO_INCOME_WITH_SHELTER catches the shelter
+  // angle; this catches the benefit eligibility angle.)
+  if (!hasAnyIncome && totalWorkingAgeAdults > 0) {
+    flags.push({
+      type: "POSSIBLE_UNREPORTED_BENEFITS",
+      severity: "MEDIUM",
+      field: "income",
+      message: "Working-age household with $0 reported income — likely eligible for or receiving unemployment, TANF, or other benefits that count as SNAP income",
+      suggestedAction: "Ask: 'Have you applied for or are you receiving unemployment benefits, TANF cash assistance, workers compensation, or any other benefits?'",
+    });
+  }
+
+  return flags;
+}
+
 function deriveRiskScore(flags) {
   const hasHigh = flags.some((f) => f.severity === "HIGH");
   const hasMedium = flags.some((f) => f.severity === "MEDIUM");
@@ -384,4 +466,5 @@ module.exports = {
   checkPayFrequencyPlausibility,
   checkMedicalExpenseReasonableness,
   checkMultipleAdultsNoIncome,
+  checkPossibleUnreportedBenefits,
 };
