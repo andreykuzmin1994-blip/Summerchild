@@ -13,6 +13,11 @@ async function runConsistencyChecks(intake, calculations, fiscalYear = 2026) {
   flags.push(...(await checkThresholdProximity(intake, calculations, fiscalYear)));
   flags.push(...checkShelterConsistency(intake));
   flags.push(...checkExpeditedCriteria(calculations));
+  flags.push(...checkZeroIncomeWithShelter(intake, calculations));
+  flags.push(...checkSelfEmploymentExpenses(intake));
+  flags.push(...checkPayFrequencyPlausibility(intake));
+  flags.push(...checkMedicalExpenseReasonableness(intake));
+  flags.push(...checkMultipleAdultsNoIncome(intake));
 
   const riskScore = deriveRiskScore(flags);
 
@@ -209,6 +214,154 @@ function checkExpeditedCriteria(calculations) {
   return flags;
 }
 
+/**
+ * Flag zero-income households that report shelter costs.
+ * The existing INCOME_EXPENSE_MISMATCH check skips when grossIncome === 0,
+ * but zero income with rent is one of the strongest indicators of unreported income.
+ */
+function checkZeroIncomeWithShelter(intake, calculations) {
+  const flags = [];
+  const grossIncome = calculations.deductions.grossIncome;
+  const shelter = intake.shelterExpense;
+
+  if (grossIncome === 0 && shelter && (shelter.rentOrMortgage || 0) > 0) {
+    flags.push({
+      type: "ZERO_INCOME_WITH_SHELTER",
+      severity: "HIGH",
+      field: "income",
+      message: `Household reports $0 income but pays $${shelter.rentOrMortgage}/mo rent — verify income sources and who pays housing costs`,
+      suggestedAction: "Ask how rent is being paid with no reported income",
+    });
+  }
+
+  return flags;
+}
+
+/**
+ * Flag self-employment income sources with unusually high expense ratios.
+ * USDA QC data shows overstated self-employment expenses are a top error source.
+ * Expenses > 60% of gross is suspicious (the standard deduction is 40%).
+ */
+function checkSelfEmploymentExpenses(intake) {
+  const flags = [];
+  const incomeSources = intake.incomeSources || [];
+
+  for (const source of incomeSources) {
+    if (source.incomeType !== "SELF_EMPLOYMENT") continue;
+
+    const gross = source.selfEmploymentGross || source.grossAmountPerPeriod || 0;
+    const expenses = source.selfEmploymentExpenses || 0;
+
+    if (gross > 0 && expenses > gross * 0.60) {
+      const ratio = Math.round((expenses / gross) * 100);
+      flags.push({
+        type: "SELF_EMPLOYMENT_HIGH_EXPENSES",
+        severity: "MEDIUM",
+        field: "income",
+        message: `Self-employment expenses ($${expenses}) are ${ratio}% of gross ($${gross}) — verify expense documentation (standard deduction is 40%)`,
+        suggestedAction: "Request receipts or documentation for claimed business expenses",
+      });
+    }
+  }
+
+  return flags;
+}
+
+/**
+ * Flag monthly income amounts that look like they may be biweekly or weekly figures.
+ * Pay frequency misreporting is ~8-10% of overpayment errors per USDA QC data.
+ *
+ * Heuristic: if someone reports MONTHLY income between $400-$1800, it could plausibly
+ * be a biweekly amount (which would double the real monthly income). We flag when
+ * the amount falls in common biweekly pay ranges and the resulting gross is near
+ * the eligibility threshold.
+ */
+function checkPayFrequencyPlausibility(intake) {
+  const flags = [];
+  const incomeSources = intake.incomeSources || [];
+
+  for (const source of incomeSources) {
+    if (source.incomeType === "SELF_EMPLOYMENT") continue;
+    if (source.payFrequency !== "MONTHLY") continue;
+
+    const amount = source.grossAmountPerPeriod || 0;
+
+    // Common biweekly pay range: $400-$1800 (roughly $5-$22/hr full-time)
+    // If reported as monthly but actually biweekly, real monthly = amount × 2.167
+    if (amount >= 400 && amount <= 1800) {
+      const ifBiweekly = Math.round(amount * 2.167 * 100) / 100;
+      flags.push({
+        type: "PAY_FREQUENCY_SUSPICIOUS",
+        severity: "MEDIUM",
+        field: "income",
+        message: `Monthly income $${amount} could be a biweekly amount (actual monthly would be $${ifBiweekly.toFixed(2)}) — confirm pay frequency with pay stub`,
+        suggestedAction: "Verify pay frequency against pay stubs or employer records",
+      });
+    }
+  }
+
+  return flags;
+}
+
+/**
+ * Flag unusually high medical expense claims.
+ * Medical expenses over $400/mo are uncommon and account for ~3-5% of overpayment
+ * errors when overstated. Only applies to elderly/disabled households that qualify.
+ */
+function checkMedicalExpenseReasonableness(intake) {
+  const flags = [];
+  const medicalExpenses = intake.medicalExpenses || 0;
+
+  if (medicalExpenses > 400) {
+    flags.push({
+      type: "MEDICAL_EXPENSE_HIGH",
+      severity: "MEDIUM",
+      field: "deductions",
+      message: `Reported medical expenses ($${medicalExpenses}/mo) are unusually high — request itemized documentation`,
+      suggestedAction: "Ask for receipts, prescription lists, or medical bills to verify amount",
+    });
+  }
+
+  return flags;
+}
+
+/**
+ * Escalate to HIGH when 2+ working-age adults in household report no income.
+ * Multiple no-income adults is the single strongest predictor of unreported
+ * household income per USDA QC data.
+ */
+function checkMultipleAdultsNoIncome(intake) {
+  const flags = [];
+  const members = intake.householdMembers || [];
+  const incomeSources = intake.incomeSources || [];
+
+  let noIncomeAdultCount = 0;
+
+  for (const member of members) {
+    if (!member.inSnapHousehold) continue;
+    if (member.ageRange === "under 18" || (member.ageRange && member.ageRange.startsWith("0-"))) continue;
+
+    if (!member.hasEarnedIncome && !member.hasUnearnedIncome) {
+      const linked = incomeSources.some((s) => s.householdMemberId === member.id);
+      if (!linked) {
+        noIncomeAdultCount++;
+      }
+    }
+  }
+
+  if (noIncomeAdultCount >= 2) {
+    flags.push({
+      type: "MULTIPLE_ADULTS_NO_INCOME",
+      severity: "HIGH",
+      field: "household",
+      message: `${noIncomeAdultCount} working-age adults in household report no income — this is the #1 predictor of unreported income in SNAP QC audits`,
+      suggestedAction: "Interview each adult about employment, gig work, and benefit status",
+    });
+  }
+
+  return flags;
+}
+
 function deriveRiskScore(flags) {
   const hasHigh = flags.some((f) => f.severity === "HIGH");
   const hasMedium = flags.some((f) => f.severity === "MEDIUM");
@@ -226,4 +379,9 @@ module.exports = {
   checkThresholdProximity,
   checkShelterConsistency,
   checkExpeditedCriteria,
+  checkZeroIncomeWithShelter,
+  checkSelfEmploymentExpenses,
+  checkPayFrequencyPlausibility,
+  checkMedicalExpenseReasonableness,
+  checkMultipleAdultsNoIncome,
 };

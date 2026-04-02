@@ -179,8 +179,8 @@ const OVERPAYMENT_PERSONAS = [
     id: "OP09",
     name: "Three adults in household, only one income source",
     overpaymentPattern: "Two working-age adults with zero reported income",
-    expectedFlags: ["HOUSEHOLD_MEMBER_NO_INCOME"],
-    expectedRisk: "MEDIUM",
+    expectedFlags: ["HOUSEHOLD_MEMBER_NO_INCOME", "MULTIPLE_ADULTS_NO_INCOME"],
+    expectedRisk: "HIGH",
     intake: {
       householdMembers: [
         member("s1", "Partner", "spouse", "30-39"),
@@ -212,8 +212,8 @@ const OVERPAYMENT_PERSONAS = [
     id: "OP11",
     name: "Mother + 2 adult daughters + grandkids, only mother works",
     overpaymentPattern: "Multiple working-age adults with no income is a top QC error pattern",
-    expectedFlags: ["HOUSEHOLD_MEMBER_NO_INCOME"],
-    expectedRisk: "MEDIUM",
+    expectedFlags: ["HOUSEHOLD_MEMBER_NO_INCOME", "MULTIPLE_ADULTS_NO_INCOME"],
+    expectedRisk: "HIGH",
     intake: {
       householdMembers: [
         member("d1", "Daughter 1", "child", "20-29"),
@@ -480,8 +480,8 @@ const OVERPAYMENT_PERSONAS = [
     id: "OP26",
     name: "Large HH, 3 no-income adults + threshold proximity",
     overpaymentPattern: "Most common QC error: unreported income from multiple adults",
-    expectedFlags: ["HOUSEHOLD_MEMBER_NO_INCOME", "THRESHOLD_PROXIMITY"],
-    expectedRisk: "MEDIUM",
+    expectedFlags: ["HOUSEHOLD_MEMBER_NO_INCOME", "THRESHOLD_PROXIMITY", "MULTIPLE_ADULTS_NO_INCOME"],
+    expectedRisk: "HIGH",
     intake: {
       householdMembers: [
         member("s1", "Spouse", "spouse", "30-39"),
