@@ -4,6 +4,7 @@ const { requireAuth, requireRole, generateToken, comparePassword, hashPassword }
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { calculateFullEligibility } = require("../services/snapCalculator");
+const { eligibilityCache, statsCache } = require("../services/queryCache");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -86,51 +87,50 @@ router.get("/dashboard", requireAuth, async (req, res) => {
       ],
     });
 
-    // Basic stats
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const weekAgo = new Date(today);
-    weekAgo.setDate(weekAgo.getDate() - 7);
+    // Dashboard stats — cached per county for 2 minutes to avoid repeated count queries
+    const countyId = req.user.countyId;
+    const stats = await statsCache.getOrCompute(`dashboard:${countyId}`, async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const weekAgo = new Date(today);
+      weekAgo.setDate(weekAgo.getDate() - 7);
 
-    const completedWhere = { countyId: req.user.countyId, status: { in: ["COMPLETED", "REVIEWED"] } };
+      const completedWhere = { countyId, status: { in: ["COMPLETED", "REVIEWED"] } };
 
-    const [todayCount, weekCount, flaggedCount, totalCompleted] = await Promise.all([
-      prisma.intake.count({ where: { countyId: req.user.countyId, createdAt: { gte: today } } }),
-      prisma.intake.count({ where: { countyId: req.user.countyId, createdAt: { gte: weekAgo } } }),
-      prisma.intake.count({ where: { countyId: req.user.countyId, riskScore: { in: ["MEDIUM", "HIGH"] } } }),
-      prisma.intake.count({ where: completedWhere }),
-    ]);
+      const [todayCount, weekCount, flaggedCount, totalCompleted, flaggedCompleted] = await Promise.all([
+        prisma.intake.count({ where: { countyId, createdAt: { gte: today } } }),
+        prisma.intake.count({ where: { countyId, createdAt: { gte: weekAgo } } }),
+        prisma.intake.count({ where: { countyId, riskScore: { in: ["MEDIUM", "HIGH"] } } }),
+        prisma.intake.count({ where: completedWhere }),
+        prisma.intake.count({ where: { ...completedWhere, riskScore: { in: ["MEDIUM", "HIGH"] } } }),
+      ]);
 
-    // Average completion time (minutes) from created_at to updated_at for completed intakes
-    const completedIntakes = await prisma.intake.findMany({
-      where: completedWhere,
-      select: { createdAt: true, updatedAt: true },
-      take: 500,
-      orderBy: { createdAt: "desc" },
-    });
-    const avgCompletionTime = completedIntakes.length > 0
-      ? Math.round(completedIntakes.reduce((sum, i) =>
-          sum + (new Date(i.updatedAt) - new Date(i.createdAt)) / 60000, 0) / completedIntakes.length)
-      : 0;
+      // Use raw SQL aggregation instead of fetching 500 rows to compute average
+      const avgResult = await prisma.$queryRaw`
+        SELECT COALESCE(
+          ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60)),
+          0
+        )::int AS avg_minutes
+        FROM intakes
+        WHERE county_id = ${countyId}
+          AND status IN ('COMPLETED', 'REVIEWED')
+      `;
+      const avgCompletionTime = avgResult[0]?.avg_minutes || 0;
 
-    // Flag rate: % of completed intakes with at least one flag (MEDIUM or HIGH risk)
-    const flaggedCompleted = await prisma.intake.count({
-      where: { ...completedWhere, riskScore: { in: ["MEDIUM", "HIGH"] } },
-    });
-    const flagRate = totalCompleted > 0
-      ? `${(flaggedCompleted / totalCompleted * 100).toFixed(1)}%`
-      : "0%";
+      const flagRate = totalCompleted > 0
+        ? `${(flaggedCompleted / totalCompleted * 100).toFixed(1)}%`
+        : "0%";
 
-    res.json({
-      intakes,
-      stats: {
+      return {
         intakesToday: todayCount,
         intakesThisWeek: weekCount,
         flaggedIntakes: flaggedCount,
         avgCompletionTimeMinutes: avgCompletionTime,
         flagRate,
-      },
+      };
     });
+
+    res.json({ intakes, stats });
   } catch (error) {
     console.error("[DASHBOARD]", error);
     res.status(500).json({ error: "Failed to load dashboard" });
@@ -165,11 +165,14 @@ router.get("/intake/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Intake not found" });
     }
 
-    // Run eligibility calculations for the output packet
+    // Run eligibility calculations for the output packet (cached by intake version)
     let eligibility = null;
     if (intake.status !== "IN_PROGRESS") {
       try {
-        eligibility = await calculateFullEligibility(intake);
+        const cacheKey = `elig:${intake.id}:${intake.updatedAt.getTime()}`;
+        eligibility = await eligibilityCache.getOrCompute(cacheKey, () =>
+          calculateFullEligibility(intake)
+        );
       } catch (err) {
         console.error("[ELIGIBILITY CALC]", err);
       }
