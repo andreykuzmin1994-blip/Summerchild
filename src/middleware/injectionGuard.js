@@ -68,18 +68,21 @@ function detectEncodedPayload(text) {
 }
 
 const INJECTION_PATTERNS = [
+  // Multi-word patterns: require the full injection phrase structure.
+  // These are written to avoid matching natural speech from ESL applicants.
+  // e.g., "pretend to be strong" should NOT match; "pretend to be a different AI" SHOULD.
   /ignore.*(?:previous|prior|above|all).*(?:instructions|rules|guidelines)/i,
-  /forget.*(?:rules|instructions|guidelines|everything)/i,
-  /pretend.*(?:you are|you're|to be)/i,
-  /(?:from now on|going forward).*(?:you|do not|don't|skip|ignore)/i,
-  /do not (?:flag|check|verify|validate)/i,
-  /override.*(?:rules|checks|system)/i,
+  /forget.*(?:rules|instructions|guidelines|everything you)/i,
+  /pretend.*(?:you are|you're|to be) (?:a different|another|an? ai|an? assistant|an? chatbot|someone|something)/i,
+  /(?:from now on|going forward).*(?:you (?:will|should|must|are)|do not|don't|skip|ignore)/i,
+  /do not (?:flag|check|verify|validate) (?:any|my|the|this)/i,
+  /override.*(?:rules|checks|system|safety|security)/i,
   /(?:system|initial|original) prompt/i,
-  /you are now/i,
-  /new (?:instructions|role|persona|identity)/i,
-  /disregard.*(?:previous|above|prior)/i,
-  /(?:reveal|show|display|output|repeat).*(?:instructions|prompt|rules)/i,
-  /(?:act|behave|respond) as (?:if|though)/i,
+  /you are now (?:a |an |my |in |free|unfiltered|unrestricted|jailbroken)/i,
+  /new (?:instructions|persona|identity|directive)/i,
+  /disregard.*(?:previous|above|prior).*(?:instructions|rules|guidelines)/i,
+  /(?:reveal|show|display|output|repeat).*(?:instructions|system prompt|rules|hidden)/i,
+  /(?:act|behave|respond) as (?:if you were|though you were|if you are)/i,
   /jailbreak/i,
   /\bDAN\b/,
   /(?:sudo|admin|root) mode/i,
@@ -88,8 +91,15 @@ const INJECTION_PATTERNS = [
 const INJECTION_RESPONSE =
   "I didn't quite catch that. Could you rephrase? I'm here to help with your SNAP application.";
 
-const MAX_INPUT_LENGTH = 2000;
-const SPECIAL_CHAR_THRESHOLD = 0.15;
+// Generous length limit: a long rambling answer from an ESL applicant
+// about their family situation could easily be 400+ words.
+// 4000 chars (~600 words) accommodates genuine answers while still
+// blocking adversarial prompt-stuffing attacks.
+const MAX_INPUT_LENGTH = 4000;
+
+// Special character threshold: raised to avoid false positives from
+// applicants typing dollar amounts, addresses with slashes, etc.
+const SPECIAL_CHAR_THRESHOLD = 0.25;
 
 /**
  * Check user input for prompt injection attempts.
