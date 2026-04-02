@@ -66,10 +66,30 @@ function injectionGuardMiddleware(req, res, next) {
   if (result.blocked) {
     // Log the attempt for security review
     console.warn(`[INJECTION BLOCKED] Reason: ${result.reason}, Input length: ${userMessage.length}`);
+
+    // Persist to audit trail for CJIS compliance — async, non-blocking
+    try {
+      const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
+      const sessionToken = req.body?.sessionToken;
+      logAuditEvent({
+        type: EVENTS.INJECTION_BLOCKED,
+        actorType: ACTORS.APPLICANT,
+        actorId: sessionToken || "unknown",
+        ip: req.ip,
+        details: {
+          reason: result.reason,
+          inputLength: userMessage.length,
+          // Store a truncated, sanitized snippet for forensic review — never the full input
+          snippet: userMessage.slice(0, 100).replace(/[^\x20-\x7E]/g, ""),
+        },
+      }).catch(() => {});
+    } catch {
+      // Audit logging failure must not block the response
+    }
+
     return res.json({
       message: INJECTION_RESPONSE,
       blocked: true,
-      injectionDetected: true,
     });
   }
 

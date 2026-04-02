@@ -14,8 +14,13 @@ const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
 const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
+const { sanitizeForDisplay, validateDataBlockCount, sanitizeAIResponse } = require("../middleware/outputSanitizer");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
+
+// Maximum conversation turns per intake session to prevent AI cost abuse.
+// A normal SNAP intake requires ~20 turns. 50 provides generous headroom.
+const MAX_CONVERSATION_TURNS = parseInt(process.env.MAX_CONVERSATION_TURNS || "50", 10);
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -499,6 +504,12 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       return res.status(400).json({ error: "sessionToken and message are required" });
     }
 
+    // Validate session token format (UUID v4) to prevent enumeration/injection
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!UUID_REGEX.test(sessionToken)) {
+      return res.status(400).json({ error: "Invalid session token format" });
+    }
+
     const session = await sessionStore.get(sessionToken);
     if (!session) {
       return res.status(404).json({ error: "Session not found or expired" });
@@ -509,6 +520,19 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       await sessionStore.delete(sessionToken);
       return res.status(440).json({ error: "Session expired due to inactivity. Please start a new intake." });
     }
+
+    // Prevent AI cost abuse: cap conversation turns per session
+    if (session.turnNumber >= MAX_CONVERSATION_TURNS) {
+      log.warn("Conversation turn limit reached", {
+        correlationId: req.correlationId,
+        intakeId: session.intakeId,
+        turnNumber: session.turnNumber,
+      });
+      return res.status(429).json({
+        error: "This session has reached the maximum number of messages. Please complete your intake or start a new session.",
+      });
+    }
+
     await sessionStore.touch(sessionToken);
 
     // Verify session matches intake
@@ -530,10 +554,27 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       sessionToken
     );
 
+    // Validate AI response data block count (defense-in-depth against prompt injection)
+    const blockCheck = validateDataBlockCount(aiResponse.rawMessage);
+    if (!blockCheck.safe) {
+      log.warn("Excessive CUSHION_DATA blocks in AI response — possible injection", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        dataBlockCount: blockCheck.count,
+      });
+      // Strip the suspicious response and return a safe fallback
+      return res.json({
+        message: "I had trouble processing that. Could you repeat your answer?",
+        section: determineCurrentSection(session.conversationHistory),
+        extractedData: [],
+        model: aiResponse.model,
+      });
+    }
+
     // Update conversation history
     session.conversationHistory.push(
       { role: "user", content: message },
-      { role: "assistant", content: aiResponse.rawMessage }
+      { role: "assistant", content: sanitizeAIResponse(aiResponse.rawMessage) }
     );
     session.turnNumber += 1;
     await sessionStore.set(sessionToken, session);
@@ -584,11 +625,11 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       }
     }
 
-    // Log conversation turns
+    // Log conversation turns (sanitize user input to prevent stored XSS in caseworker dashboard)
     await withRetry(
       () => prisma.conversationLog.createMany({
         data: [
-          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: message },
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: sanitizeForDisplay(message) },
           { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: aiResponse.displayMessage },
         ],
       }),
@@ -636,9 +677,14 @@ router.get("/:id/summary", async (req, res) => {
     const { id } = req.params;
     const sessionToken = req.headers["x-session-token"] || req.query.sessionToken;
 
+    // Session token is required — prevents enumeration of intake IDs
+    if (!sessionToken) {
+      return res.status(401).json({ error: "Session token required" });
+    }
+
     const intake = await withRetry(
       () => prisma.intake.findFirst({
-        where: { id, ...(sessionToken ? { sessionToken } : {}) },
+        where: { id, sessionToken },
         include: {
           applicant: true,
           householdMembers: true,
@@ -685,6 +731,10 @@ router.post("/:id/complete", async (req, res) => {
   try {
     const { id } = req.params;
     const { sessionToken } = req.body;
+
+    if (!sessionToken) {
+      return res.status(401).json({ error: "Session token required" });
+    }
 
     const intake = await withRetry(
       () => prisma.intake.findFirst({
