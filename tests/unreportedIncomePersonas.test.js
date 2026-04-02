@@ -4,11 +4,15 @@ import { setupPrismaMock } from "./helpers/mockPrisma.js";
 /**
  * Unreported Income Persona Tests
  *
- * 15 scenarios where applicants don't realize certain income counts for SNAP.
+ * 25 scenarios where applicants don't realize certain income counts for SNAP.
  * Covers: UI benefits, workers' comp, regular cash gifts, room rental,
  * alimony, TANF, informal self-employment, day labor, gig work.
  *
- * Also tests the new POSSIBLE_UNREPORTED_BENEFITS consistency check.
+ * UI16-UI25: UI combination scenarios — UI + Social Security, UI + 401k,
+ * UI + pension, UI + VA, UI + SSDI, UI + child support, UI + rental income,
+ * SS + 401k, and multi-source misses (UI + job + cash).
+ *
+ * Also tests the POSSIBLE_UNREPORTED_BENEFITS consistency check.
  */
 
 const require_ = setupPrismaMock(import.meta.url);
@@ -169,7 +173,7 @@ describe("Unreported Income — Overpayment Impact", () => {
       });
     }
 
-    expect(impacts).toHaveLength(15);
+    expect(impacts).toHaveLength(25);
 
     // Every persona should be getting benefits (eligible at reported income)
     for (const impact of impacts) {
@@ -185,6 +189,81 @@ describe("Unreported Income — Overpayment Impact", () => {
         Benefit: i.benefitAtReported,
       }))
     );
+  });
+});
+
+// ─── UI Combination Scenarios (UI16–UI25) ─────────────────────────────────
+
+describe("UI Combination Scenarios", () => {
+  it("UI16: early retiree SS + UI — only reports SS, UI is the hidden income", async () => {
+    const persona = UNREPORTED_INCOME_PERSONAS.find((p) => p.id === "UI16");
+    const intake = prepareIntake(persona);
+    const eligibility = await calculateFullEligibility(intake, "GA", 2026);
+
+    // Reports SS $1450/mo, missing UI $1300/mo → actual gross would be $2750
+    expect(eligibility.deductions.grossIncome).toBe(1450);
+    // Still eligible at reported income (HH2 elderly, skips gross test)
+    expect(eligibility.eligible).toBe(true);
+  });
+
+  it("UI17: 401k + UI both unreported — maximum overpayment risk", async () => {
+    const persona = UNREPORTED_INCOME_PERSONAS.find((p) => p.id === "UI17");
+    const intake = prepareIntake(persona);
+    const eligibility = await calculateFullEligibility(intake, "GA", 2026);
+    const result = await runConsistencyChecks(intake, eligibility, 2026);
+
+    // Gets max HH1 benefit at $0 reported
+    expect(eligibility.benefitEstimate.estimatedBenefit).toBe(292);
+    // With actual $3213/mo income, would exceed HH1 $1632 gross limit → ineligible
+    expect(result.riskScore).toBe("HIGH");
+  });
+
+  it("UI18: couple where both incomes unreported — spouse SS + applicant UI", async () => {
+    const persona = UNREPORTED_INCOME_PERSONAS.find((p) => p.id === "UI18");
+    const intake = prepareIntake(persona);
+    const eligibility = await calculateFullEligibility(intake, "GA", 2026);
+    const result = await runConsistencyChecks(intake, eligibility, 2026);
+
+    // HH2 at $0 income = max $536 benefit
+    expect(eligibility.benefitEstimate.estimatedBenefit).toBe(536);
+    // Actual $3036/mo would far exceed HH2 $2204 gross limit
+    expect(result.flags.some((f) => f.type === "ZERO_INCOME_WITH_SHELTER")).toBe(true);
+    expect(result.flags.some((f) => f.type === "HOUSEHOLD_MEMBER_NO_INCOME")).toBe(true);
+  });
+
+  it("UI22: single mom reports child support but not UI — common pattern", async () => {
+    const persona = UNREPORTED_INCOME_PERSONAS.find((p) => p.id === "UI22");
+    const intake = prepareIntake(persona);
+    const eligibility = await calculateFullEligibility(intake, "GA", 2026);
+
+    // Reports only $450/mo CS for HH3 → gets near-max benefit
+    expect(eligibility.deductions.grossIncome).toBe(450);
+    // With UI $1386 added, gross would be $1836 — still under HH3 $2776 but much lower benefit
+    expect(eligibility.eligible).toBe(true);
+  });
+
+  it("UI24: retiree SS + 401k withdrawals — 401k is 'savings not income'", async () => {
+    const persona = UNREPORTED_INCOME_PERSONAS.find((p) => p.id === "UI24");
+    const intake = prepareIntake(persona);
+    const eligibility = await calculateFullEligibility(intake, "GA", 2026);
+
+    // Reports SS $1800/mo, missing 401k $1500/mo → actual $3300/mo
+    // HH2 elderly gross limit is N/A (skip gross test), net limit $1698
+    // At reported $1800, net after deductions likely still eligible
+    expect(eligibility.deductions.grossIncome).toBe(1800);
+    expect(eligibility.eligible).toBe(true);
+  });
+
+  it("UI25: triple miss — job + UI + cash, only reports the job", async () => {
+    const persona = UNREPORTED_INCOME_PERSONAS.find((p) => p.id === "UI25");
+    const intake = prepareIntake(persona);
+    const eligibility = await calculateFullEligibility(intake, "GA", 2026);
+    const result = await runConsistencyChecks(intake, eligibility, 2026);
+
+    // Reports $200/wk = $866.60/mo, missing $1700/mo
+    expect(eligibility.deductions.grossIncome).toBeCloseTo(866.6, 0);
+    // Earned only, no unearned → POSSIBLE_UNREPORTED_BENEFITS fires
+    expect(result.flags.some((f) => f.type === "POSSIBLE_UNREPORTED_BENEFITS")).toBe(true);
   });
 });
 
@@ -279,7 +358,7 @@ describe("checkPossibleUnreportedBenefits", () => {
 // ─── Snapshot ──────────────────────────────────────────────────────────────
 
 describe("Unreported Income Personas — Snapshot Generation", () => {
-  it("generates benchmark data for all 15 personas", async () => {
+  it("generates benchmark data for all 25 personas", async () => {
     const benchmarks = [];
 
     for (const persona of UNREPORTED_INCOME_PERSONAS) {
@@ -301,7 +380,7 @@ describe("Unreported Income Personas — Snapshot Generation", () => {
       });
     }
 
-    expect(benchmarks).toHaveLength(15);
+    expect(benchmarks).toHaveLength(25);
 
     // All should be MEDIUM or HIGH
     expect(benchmarks.every((b) => b.riskScore === "MEDIUM" || b.riskScore === "HIGH")).toBe(true);

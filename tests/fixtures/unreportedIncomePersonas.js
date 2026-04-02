@@ -1,5 +1,5 @@
 /**
- * 15 Unreported Income Benchmark Personas
+ * 25 Unreported Income Benchmark Personas
  *
  * Scenarios where applicants don't realize certain income counts for SNAP.
  * These are the most common "honest mistake" overpayment patterns — not fraud,
@@ -297,6 +297,176 @@ const UNREPORTED_INCOME_PERSONAS = [
       // Only reports child support
       incomeSources: [income("CHILD_SUPPORT", "MONTHLY", 350)],
       shelterExpense: { ...shelter(800), totalShelterCost: 1214 },
+      liquidResources: 150,
+    },
+  },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // UI COMBINATION SCENARIOS
+  // The most frequent real-world pattern: UI + another income source,
+  // where the applicant reports one but not the other (or neither).
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  {
+    id: "UI16",
+    name: "Early retiree (62) drawing SS $1450/mo + UI $300/wk from last job — only reports SS",
+    missingIncomeType: "UNEMPLOYMENT",
+    missingAmount: 1300, // 300 × 4.333
+    whyUnreported: "Just retired and got laid off from final job — 'I'm retired now, SS is my income'",
+    expectedFlags: ["PAY_FREQUENCY_SUSPICIOUS"],
+    expectedRisk: "MEDIUM",
+    intake: {
+      householdMembers: [],
+      incomeSources: [income("SOCIAL_SECURITY", "MONTHLY", 1450)],
+      shelterExpense: shelter(950),
+      liquidResources: 1200,
+    },
+    applicantIsElderly: true,
+  },
+  {
+    id: "UI17",
+    name: "Tapping 401k $2000/mo + UI $280/wk, reports $0 — 'living off savings'",
+    missingIncomeType: "OTHER",
+    missingAmount: 3213, // 401k $2000 + UI $1213
+    whyUnreported: "401k withdrawals are 'my own savings, not income' — UI is 'temporary'",
+    expectedFlags: ["ZERO_INCOME_WITH_SHELTER", "POSSIBLE_UNREPORTED_BENEFITS"],
+    expectedRisk: "HIGH",
+    intake: {
+      householdMembers: [],
+      incomeSources: [],
+      shelterExpense: shelter(1000),
+      liquidResources: 8000,
+    },
+  },
+  {
+    id: "UI18",
+    name: "Spouse draws SS $1650/mo at 63, applicant on UI $320/wk — reports neither",
+    missingIncomeType: "UNEMPLOYMENT",
+    missingAmount: 3036, // SS $1650 + UI $1386
+    whyUnreported: "Spouse 'is retired' and applicant 'is unemployed' — neither considers their payments as income",
+    expectedFlags: ["ZERO_INCOME_WITH_SHELTER", "HOUSEHOLD_MEMBER_NO_INCOME", "POSSIBLE_UNREPORTED_BENEFITS"],
+    expectedRisk: "HIGH",
+    intake: {
+      householdMembers: [
+        member("s1", "Spouse", "spouse", "60+", { elderly: true }),
+      ],
+      incomeSources: [],
+      shelterExpense: shelter(1200),
+      liquidResources: 500,
+    },
+  },
+  {
+    id: "UI19",
+    name: "Military pension $1800/mo + UI from civilian job $250/wk — only reports pension",
+    missingIncomeType: "UNEMPLOYMENT",
+    missingAmount: 1083, // 250 × 4.333
+    whyUnreported: "Pension is 'my retirement' — UI from short civilian job feels separate",
+    expectedFlags: ["PAY_FREQUENCY_SUSPICIOUS"],
+    expectedRisk: "MEDIUM",
+    intake: {
+      householdMembers: [],
+      incomeSources: [income("PENSION", "MONTHLY", 1800)],
+      shelterExpense: shelter(1100),
+      liquidResources: 400,
+    },
+  },
+  {
+    id: "UI20",
+    name: "VA disability $1200/mo + UI $300/wk, spouse also works part-time unreported — only reports VA",
+    missingIncomeType: "UNEMPLOYMENT",
+    missingAmount: 1300, // UI only; spouse's income is separate missing amount
+    whyUnreported: "VA is 'for my service-connected disability' — doesn't think UI from warehouse job counts",
+    expectedFlags: ["PAY_FREQUENCY_SUSPICIOUS", "HOUSEHOLD_MEMBER_NO_INCOME"],
+    expectedRisk: "MEDIUM",
+    intake: {
+      householdMembers: [
+        member("s1", "Spouse", "spouse", "30-39"),
+        member("c1", "Child A", "child", "under 18"),
+      ],
+      incomeSources: [income("VA_BENEFITS", "MONTHLY", 1200)],
+      shelterExpense: shelter(850),
+      medicalExpenses: 75,
+      liquidResources: 250,
+    },
+    applicantIsDisabled: true,
+  },
+  {
+    id: "UI21",
+    name: "SSDI $1450/mo + partial UI $180/wk from old part-time job — only reports SSDI",
+    missingIncomeType: "UNEMPLOYMENT",
+    missingAmount: 780, // 180 × 4.333
+    whyUnreported: "On disability, had a part-time job that ended — 'didn't think UI counted since I'm on disability'",
+    expectedFlags: ["PAY_FREQUENCY_SUSPICIOUS"],
+    expectedRisk: "MEDIUM",
+    intake: {
+      householdMembers: [],
+      incomeSources: [income("SSDI", "MONTHLY", 1450)],
+      shelterExpense: shelter(600, "BASIC"),
+      medicalExpenses: 150,
+      liquidResources: 200,
+    },
+    applicantIsDisabled: true,
+  },
+  {
+    id: "UI22",
+    name: "Child support $450/mo + UI $320/wk, single mom — only reports child support",
+    missingIncomeType: "UNEMPLOYMENT",
+    missingAmount: 1386, // 320 × 4.333
+    whyUnreported: "Child support is 'for the kids' and UI is 'temporary while I job search' — both count",
+    expectedFlags: ["PAY_FREQUENCY_SUSPICIOUS"],
+    expectedRisk: "MEDIUM",
+    intake: {
+      householdMembers: [
+        member("c1", "Child A", "child", "under 18"),
+        member("c2", "Child B", "child", "under 18"),
+      ],
+      incomeSources: [income("CHILD_SUPPORT", "MONTHLY", 450)],
+      shelterExpense: shelter(850),
+      liquidResources: 100,
+    },
+  },
+  {
+    id: "UI23",
+    name: "Rental income $900/mo from inherited duplex + UI $280/wk — reports neither",
+    missingIncomeType: "OTHER",
+    missingAmount: 2113, // rental $900 + UI $1213
+    whyUnreported: "Rental property 'pays for itself' — UI is temporary. Neither feels like 'my income'",
+    expectedFlags: ["ZERO_INCOME_WITH_SHELTER", "POSSIBLE_UNREPORTED_BENEFITS"],
+    expectedRisk: "HIGH",
+    intake: {
+      householdMembers: [],
+      incomeSources: [],
+      shelterExpense: shelter(700, "BASIC"),
+      liquidResources: 2500,
+    },
+  },
+  {
+    id: "UI24",
+    name: "SS $1800/mo + 401k withdrawals $1500/mo — only reports SS, '401k is savings not income'",
+    missingIncomeType: "OTHER",
+    missingAmount: 1500, // 401k monthly withdrawal
+    whyUnreported: "Already paid taxes on 401k contributions — 'it's my money, not new income'",
+    expectedFlags: ["PAY_FREQUENCY_SUSPICIOUS"],
+    expectedRisk: "MEDIUM",
+    intake: {
+      householdMembers: [],
+      incomeSources: [income("SOCIAL_SECURITY", "MONTHLY", 1800)],
+      shelterExpense: shelter(0, "HEATING_COOLING", { propertyTax: 200, insurance: 100 }),
+      liquidResources: 15000,
+    },
+    applicantIsElderly: true,
+  },
+  {
+    id: "UI25",
+    name: "Part-time cashier $200/wk + UI $300/wk + sells tamales ~$400/mo — only reports the cashier job",
+    missingIncomeType: "UNEMPLOYMENT",
+    missingAmount: 1700, // UI $1300 + tamales $400
+    whyUnreported: "Cashier job is 'my only real job' — UI is temporary, tamales are 'just a side thing'",
+    expectedFlags: ["POSSIBLE_UNREPORTED_BENEFITS"],
+    expectedRisk: "MEDIUM",
+    intake: {
+      householdMembers: [],
+      incomeSources: [income("EMPLOYMENT", "WEEKLY", 200)],
+      shelterExpense: shelter(800),
       liquidResources: 150,
     },
   },
