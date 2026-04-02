@@ -1,9 +1,12 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { withRetry } = require("../services/dbRetry");
+const { child } = require("../services/logger");
 
 const prisma = new PrismaClient();
 const router = express.Router();
+const log = child("admin");
 
 /**
  * GET /api/admin/stats
@@ -99,7 +102,7 @@ router.get("/audit-log", requireAuth, requireRole("ADMIN"), async (req, res) => 
  */
 router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), async (req, res) => {
   try {
-    const { status, startDate, endDate } = req.query;
+    const { status, startDate, endDate, page } = req.query;
     const where = { countyId: req.user.countyId };
     if (status) where.status = status;
     if (startDate || endDate) {
@@ -108,19 +111,36 @@ router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), a
       if (endDate) where.createdAt.lte = new Date(endDate);
     }
 
-    const intakes = await prisma.intake.findMany({
-      where,
-      include: {
-        applicant: true,
-        householdMembers: true,
-        incomeSources: true,
-        deductions: true,
-        shelterExpense: true,
-        reviews: { include: { caseworker: { select: { name: true } } } },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 5000,
-    });
+    // Configurable page size with county-appropriate default (5000 per page)
+    const PAGE_SIZE = Math.min(parseInt(req.query.pageSize) || 5000, 10000);
+    const pageNum = Math.max(1, parseInt(page) || 1);
+
+    // Get total count first so we can warn about truncation
+    const totalCount = await withRetry(
+      () => prisma.intake.count({ where }),
+      { context: "intake.count.export", correlationId: req.correlationId }
+    );
+
+    const intakes = await withRetry(
+      () => prisma.intake.findMany({
+        where,
+        include: {
+          applicant: true,
+          householdMembers: true,
+          incomeSources: true,
+          deductions: true,
+          shelterExpense: true,
+          reviews: { include: { caseworker: { select: { name: true } } } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: PAGE_SIZE,
+        skip: (pageNum - 1) * PAGE_SIZE,
+      }),
+      { context: "intake.findMany.export", correlationId: req.correlationId }
+    );
+
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+    const isTruncated = totalCount > PAGE_SIZE;
 
     // Build CSV
     const headers = [
@@ -165,14 +185,32 @@ router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), a
       actorId: req.user.id,
       countyId: req.user.countyId,
       ip: req.ip,
-      details: { exportType: "intakes_csv", recordCount: intakes.length },
+      details: {
+        exportType: "intakes_csv",
+        recordCount: intakes.length,
+        totalRecords: totalCount,
+        page: pageNum,
+        totalPages,
+        truncated: isTruncated,
+      },
     });
 
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename="intakes-export-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.setHeader("Content-Disposition", `attachment; filename="intakes-export-${new Date().toISOString().slice(0, 10)}-page${pageNum}.csv"`);
+    // Pagination and truncation metadata headers
+    res.setHeader("X-Total-Count", String(totalCount));
+    res.setHeader("X-Page", String(pageNum));
+    res.setHeader("X-Total-Pages", String(totalPages));
+    if (isTruncated) {
+      res.setHeader("X-Truncated", "true");
+      res.setHeader("X-Truncation-Warning", `Results limited to ${PAGE_SIZE} records per page. Use ?page=N to retrieve additional pages (${totalPages} total).`);
+    }
     res.send(csvContent);
   } catch (error) {
-    console.error("[EXPORT]", error);
+    log.error("Export failed", {
+      correlationId: req.correlationId,
+      error: error.message,
+    });
     res.status(500).json({ error: "Failed to export data" });
   }
 });

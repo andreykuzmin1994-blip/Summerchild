@@ -8,9 +8,29 @@ import SessionTimeoutWarning from "../components/SessionTimeoutWarning";
 
 const API_BASE = "/api/intake";
 
+/**
+ * Parse rate limit headers and throw informative errors.
+ * County kiosk compliance: messages must be clear at an 8th-grade reading level.
+ */
 function handleHttpError(res) {
   if (res.status === 440) throw new Error("SESSION_EXPIRED");
-  if (res.status === 429) throw new Error("You're sending messages too quickly. Please wait a moment and try again.");
+  if (res.status === 429) {
+    // Parse standard rate limit headers for a helpful countdown
+    const retryAfter = res.headers.get("Retry-After");
+    const remaining = res.headers.get("RateLimit-Remaining");
+    const resetTime = res.headers.get("RateLimit-Reset");
+
+    let waitSeconds = retryAfter ? parseInt(retryAfter, 10) : null;
+    if (!waitSeconds && resetTime) {
+      waitSeconds = Math.max(1, Math.ceil((parseInt(resetTime, 10) * 1000 - Date.now()) / 1000));
+    }
+
+    const waitMessage = waitSeconds
+      ? `Please wait ${waitSeconds} seconds before sending another message.`
+      : "Please wait a moment before sending another message.";
+
+    throw new Error(`RATE_LIMITED:${waitSeconds || 30}:${waitMessage}`);
+  }
   if (res.status >= 500) throw new Error("Our system is temporarily unavailable. Please try again in a moment.");
   if (!res.ok) throw new Error("Something went wrong. Please try again.");
 }
@@ -32,10 +52,26 @@ export default function IntakePage() {
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
   const [queueNumber, setQueueNumber] = useState(null);
+  const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
 
   useEffect(() => {
     document.documentElement.lang = language || "en";
   }, [language]);
+
+  // Rate limit countdown timer
+  useEffect(() => {
+    if (rateLimitCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setRateLimitCountdown((prev) => {
+        if (prev <= 1) {
+          setError(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [rateLimitCountdown]);
 
   const handleSessionExpired = useCallback(() => {
     setSessionExpired(true);
@@ -105,11 +141,23 @@ export default function IntakePage() {
       }
     } catch (err) {
       if (err.message === "SESSION_EXPIRED") { setSessionExpired(true); return; }
-      setError(err.message);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "I'm sorry, something went wrong. Please try again." },
-      ]);
+
+      // Handle rate limiting with countdown
+      if (err.message.startsWith("RATE_LIMITED:")) {
+        const parts = err.message.split(":");
+        const seconds = parseInt(parts[1], 10) || 30;
+        const userMessage = parts.slice(2).join(":");
+        setRateLimitCountdown(seconds);
+        setError(userMessage);
+        // Remove the user's message that wasn't sent
+        setMessages((prev) => prev.slice(0, -1));
+      } else {
+        setError(err.message);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "I'm sorry, something went wrong. Please try again." },
+        ]);
+      }
     }
     setIsLoading(false);
   };
@@ -334,12 +382,13 @@ export default function IntakePage() {
       <div className="h-screen flex flex-col bg-white">
         <ProgressBar currentSection={section} />
         <main id="main-content" className="flex-1 overflow-hidden" role="main">
-          <ErrorBanner message={error} onRetry={() => setError(null)} />
+          <ErrorBanner message={error} onRetry={() => setError(null)} rateLimitCountdown={rateLimitCountdown} />
           <ChatInterface
             messages={messages}
             onSendMessage={sendMessage}
             section={section}
-            isLoading={isLoading}
+            isLoading={isLoading || rateLimitCountdown > 0}
+            rateLimitCountdown={rateLimitCountdown}
           />
         </main>
       </div>

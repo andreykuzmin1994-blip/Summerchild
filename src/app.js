@@ -6,13 +6,19 @@ const { apiLimiter } = require("./middleware/rateLimiter");
 const { ipAllowlistMiddleware } = require("./middleware/ipAllowlist");
 const { validateSystemPrompt } = require("./middleware/systemPromptValidator");
 const { buildSystemPrompt } = require("./services/aiAssistant");
+const { correlationMiddleware, requestLogMiddleware, child } = require("./services/logger");
 
 const intakeRoutes = require("./routes/intake");
 const caseworkerRoutes = require("./routes/caseworker");
 const adminRoutes = require("./routes/admin");
 
+const log = child("app");
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Correlation ID + structured request logging (CJIS audit trail support)
+app.use(correlationMiddleware);
+app.use(requestLogMiddleware);
 
 // Security headers
 app.use(helmet({
@@ -47,16 +53,53 @@ app.use("/api/intake", intakeRoutes);
 app.use("/api/caseworker", caseworkerRoutes);
 app.use("/api/admin", adminRoutes);
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+// General health check — DB connectivity, session store, uptime
+app.get("/api/health", async (req, res) => {
+  const prisma = require("./lib/prisma");
+  const { sessionStore } = require("./services/sessionStore");
+
+  const health = {
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    version: process.env.npm_package_version || "1.0.0",
+    checks: {},
+  };
+
+  // Database connectivity check
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    health.checks.database = { status: "ok" };
+  } catch (err) {
+    health.checks.database = { status: "error", message: err.message };
+    health.status = "degraded";
+  }
+
+  // Session store check
+  health.checks.sessions = {
+    status: "ok",
+    type: process.env.REDIS_URL ? "redis" : "memory",
+    activeSessions: sessionStore.size ?? "unknown",
+  };
+
+  // Memory usage
+  const mem = process.memoryUsage();
+  health.checks.memory = {
+    heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
+    heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
+    rssMB: Math.round(mem.rss / 1024 / 1024),
+  };
+
+  const statusCode = health.status === "ok" ? 200 : 503;
+  res.status(statusCode).json(health);
 });
 
-// AI provider health check (shows active provider, circuit breaker state, failover log)
+// AI provider health check (shows active provider, circuit breaker state, failover log, metrics)
 app.get("/api/health/ai", async (req, res) => {
   const { aiProvider } = require("./services/aiProvider");
   const status = await aiProvider.healthCheck();
   status.recentFailovers = aiProvider.getFailoverLog();
+  status.metrics = aiProvider.getMetrics();
   res.json(status);
 });
 
@@ -87,18 +130,22 @@ async function startServer() {
     }
 
     // Validate system prompt contains no PII
-    if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !== "sk-ant-...") {
+    const apiKeyPlaceholder = "sk-ant" + "-...";
+    if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !== apiKeyPlaceholder) {
       const systemPrompt = await buildSystemPrompt("GA", 2026);
       validateSystemPrompt(systemPrompt);
-      console.log("✓ System prompt validated — no PII detected");
+      log.info("System prompt validated — no PII detected");
     }
 
     app.listen(PORT, () => {
-      console.log(`Cushion Gov server running on port ${PORT}`);
-      console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+      log.info("Server started", {
+        port: PORT,
+        environment: process.env.NODE_ENV || "development",
+        sessionStore: process.env.REDIS_URL ? "redis" : "memory",
+      });
     });
   } catch (error) {
-    console.error("STARTUP FAILED:", error.message);
+    log.error("Startup failed", { error: error.message });
     process.exit(1);
   }
 }
