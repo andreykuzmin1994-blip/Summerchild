@@ -10,6 +10,7 @@
 **Cushion Gov** is an AI-powered SNAP (Supplemental Nutrition Assistance Program) intake platform deployed for county government use. It replaces traditional paper-based intake with a conversational chat interface that guides applicants through eligibility screening, collects household/income/expense data, calculates SNAP benefits, and routes cases to caseworkers for review.
 
 ### Tech Stack
+
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 19 + Vite 6 + Tailwind CSS 3.4 |
@@ -19,304 +20,128 @@
 | Auth | JWT (8h expiry) + bcrypt |
 | Testing | Vitest 3.2 (20 backend test files) |
 
-### What We Have Today
-- Conversational intake flow with English/Spanish support
-- AI-assisted data collection with PII stripping and injection guards
-- SNAP benefit calculator with 6-step federal deduction logic
-- 14-rule consistency checker with risk scoring (LOW/MEDIUM/HIGH)
-- Role-based dashboards (Caseworker, Supervisor, Admin)
-- Immutable audit trail for government compliance
-- Circuit breaker pattern for AI provider failover
-- WCAG 2.1 AA accessibility compliance
-- Kiosk-mode with staff PIN authentication
-- CSV export and basic analytics
+### Current Capabilities
+
+| Capability | Status | Details |
+|-----------|--------|---------|
+| Conversational intake | Done | Chat-based flow with English/Spanish support |
+| AI data collection | Done | PII stripping + injection guards |
+| SNAP calculator | Done | 6-step federal deduction logic |
+| Consistency checker | Done | 14-rule risk scoring (LOW/MEDIUM/HIGH) |
+| Role-based dashboards | Done | Caseworker, Supervisor, Admin |
+| Audit trail | Done | Immutable logging for government compliance |
+| AI failover | Done | Circuit breaker (Claude -> OpenAI) |
+| Accessibility | Done | WCAG 2.1 AA compliance |
+| Kiosk mode | Done | Staff PIN authentication |
+| Data export | Done | CSV export + basic analytics |
 
 ---
 
-## Team Analysis & Improvement Recommendations
-
-### 1. SYSTEM ARCHITECT PERSPECTIVE
-
-#### 1.1 Move from In-Memory Sessions to Redis (Priority: CRITICAL)
-
-**Problem**: Intake sessions are stored in a JavaScript `Map()` in server memory. Any server restart loses all active sessions. This is a single point of failure and prevents horizontal scaling.
-
-**Recommendation**:
-- Introduce Redis for session storage, system prompt caching, and rate limiting
-- Use `connect-redis` or `ioredis` for Express session middleware
-- Enable sticky sessions or shared session store for multi-instance deployments
-- Estimated effort: 2-3 days
-
-#### 1.2 Add Structured Logging & Observability (Priority: HIGH)
-
-**Problem**: All logging is `console.log`/`console.error` to stdout with no structure. No APM, no external error tracking, no performance metrics.
-
-**Recommendation**:
-- Adopt **Pino** or **Winston** for structured JSON logging with log levels
-- Integrate **Sentry** for error tracking and alerting
-- Add response time middleware to track API performance
-- Instrument AI API calls with latency/token-usage metrics
-- Add Prometheus-compatible `/metrics` endpoint for monitoring
-- Estimated effort: 3-4 days
-
-#### 1.3 Implement API Versioning (Priority: MEDIUM)
-
-**Problem**: Routes have no version prefix. Any breaking change affects all clients immediately.
-
-**Recommendation**:
-- Prefix all routes with `/api/v1/`
-- Document a deprecation policy for future API changes
-- Estimated effort: 1 day
-
-#### 1.4 Container Orchestration & CI/CD (Priority: MEDIUM)
-
-**Problem**: Docker files exist but there's no CI/CD pipeline configuration. Deployment is likely manual.
-
-**Recommendation**:
-- Add GitHub Actions workflow for: lint, test, build, deploy
-- Implement staging environment that mirrors production
-- Add database migration step to deployment pipeline
-- Consider health check-based rolling deployments
-- Estimated effort: 3-5 days
-
-#### 1.5 Database Connection Pooling & Optimization (Priority: MEDIUM)
-
-**Problem**: No explicit connection pooling configuration. Under load, database connections could exhaust.
-
-**Recommendation**:
-- Configure Prisma connection pool limits (`connection_limit` in DATABASE_URL)
-- Add PgBouncer for production connection pooling
-- Add database query logging in development for performance profiling
-- Estimated effort: 1-2 days
-
----
-
-### 2. FRONTEND DEVELOPER PERSPECTIVE
-
-#### 2.1 Add Global State Management (Priority: HIGH)
-
-**Problem**: Every page independently fetches data. No shared state between components. Auth state is checked via `localStorage` in every component's `useEffect`. User context (role, county, name) is duplicated across pages.
-
-**Recommendation**:
-- Introduce **React Context** for auth state (token, user profile, role)
-- Create an `AuthProvider` that wraps the app and handles login/logout/token refresh
-- Consider **TanStack Query (React Query)** for server state management with caching, refetching, and optimistic updates
-- Estimated effort: 2-3 days
-
-#### 2.2 Add Route Guards (Priority: HIGH)
-
-**Problem**: Route protection is done via `useEffect` checks in each dashboard component. No centralized protection. A user could briefly see protected content before being redirected.
-
-**Recommendation**:
-- Create a `<ProtectedRoute>` wrapper component that checks auth before rendering
-- Implement role-based route guards: `<RequireRole roles={["ADMIN", "SUPERVISOR"]}>`
-- Add a loading state during auth verification to prevent content flash
-- Estimated effort: 1 day
-
-#### 2.3 Implement Code Splitting & Lazy Loading (Priority: MEDIUM)
-
-**Problem**: All pages are bundled into a single chunk. Users download the entire app even if they only use the intake form.
-
-**Recommendation**:
-- Use `React.lazy()` + `Suspense` for route-level code splitting
-- Lazy-load dashboard pages (caseworker, supervisor, admin) since most users are applicants
-- Add loading fallback components for better perceived performance
-- Estimated effort: 1 day
-
-#### 2.4 Add Frontend Testing (Priority: HIGH)
-
-**Problem**: Zero frontend test files. No test configuration. Critical user flows (intake chat, session timeout, login) are untested.
-
-**Recommendation**:
-- Set up **Vitest** + **React Testing Library** in the client package
-- Priority test targets:
-  - `IntakePage.jsx` - Chat message flow, section transitions, session timeout
-  - `LoginPage.jsx` - Auth flow, error handling, role-based redirect
-  - `ChatInterface.jsx` - Message rendering, input handling, quick replies
-  - `ReviewSummary.jsx` - Data display accuracy
-  - `SessionTimeoutWarning.jsx` - Timer logic, warning display
-- Add **Playwright** or **Cypress** for end-to-end testing of the complete intake flow
-- Estimated effort: 5-7 days
-
-#### 2.5 Add Error Boundaries (Priority: MEDIUM)
-
-**Problem**: No React Error Boundary components. An unhandled JavaScript error in any component crashes the entire app with a white screen.
-
-**Recommendation**:
-- Add a top-level `<ErrorBoundary>` that catches render errors and shows a friendly fallback
-- Add route-level error boundaries so a crash in one page doesn't affect others
-- Log caught errors to the backend for tracking
-- Estimated effort: 1 day
-
-#### 2.6 Adopt TypeScript (Priority: MEDIUM)
-
-**Problem**: The frontend is vanilla JavaScript despite TypeScript being available in the project root. Complex state shapes (intake summary, household members, income sources) are error-prone without types.
-
-**Recommendation**:
-- Incrementally adopt TypeScript starting with shared types/interfaces
-- Define types for API responses, intake state, and component props
-- Use `// @ts-check` JSDoc comments as a bridge during migration
-- Estimated effort: 3-5 days (incremental)
-
-#### 2.7 Improve Mobile Experience (Priority: MEDIUM)
-
-**Problem**: While Tailwind responsive classes are used, the intake chat interface could be better optimized for kiosk/tablet use in government offices.
-
-**Recommendation**:
-- Add touch-optimized gesture support for chat scrolling
-- Increase button/input sizes for kiosk touch screens
-- Test and optimize for common government-issued tablets (iPad, Samsung Galaxy Tab)
-- Add PWA support (service worker, manifest) for offline resilience
-- Estimated effort: 3-4 days
-
-#### 2.8 Add Skeleton Loading States (Priority: LOW)
-
-**Problem**: Loading states use simple text ("Loading...") rather than skeleton screens. Dashboards show blank white space while data loads.
-
-**Recommendation**:
-- Add skeleton components for dashboard cards, intake lists, and detail views
-- Improves perceived performance significantly
-- Estimated effort: 1-2 days
-
----
-
-### 3. BACKEND DEVELOPER PERSPECTIVE
-
-#### 3.1 Generate OpenAPI/Swagger Documentation (Priority: HIGH)
-
-**Problem**: No API documentation exists. New developers must read route handlers to understand endpoints. No request/response schema documentation.
-
-**Recommendation**:
-- Add **swagger-jsdoc** + **swagger-ui-express** to auto-generate API docs
-- Document all endpoints with request/response schemas, error codes, and auth requirements
-- Serve interactive docs at `/api/docs`
-- Estimated effort: 2-3 days
-
-#### 3.2 Add Background Job Processing (Priority: MEDIUM)
-
-**Problem**: CSV export runs synchronously and blocks the request. Large exports could timeout. No infrastructure for future async needs (email notifications, report generation).
-
-**Recommendation**:
-- Introduce **BullMQ** with Redis for background job processing
-- Move CSV export to async job with progress tracking
-- Prepare infrastructure for future needs: email notifications, scheduled reports, intake reminders
-- Estimated effort: 3-4 days
-
-#### 3.3 Improve Test Coverage for API Routes (Priority: HIGH)
-
-**Problem**: Tests focus on business logic (calculator, consistency checks) but don't test HTTP endpoints. No integration tests that exercise the full request/response cycle.
-
-**Recommendation**:
-- Add **Supertest** for HTTP endpoint testing
-- Test auth flows: login, token validation, role enforcement, session expiry
-- Test intake lifecycle: start → message → summary → complete
-- Test error scenarios: rate limiting, injection blocking, invalid input
-- Test admin operations: user management, audit log, CSV export
-- Estimated effort: 4-5 days
-
-#### 3.4 Add Request Validation Middleware (Priority: MEDIUM)
-
-**Problem**: Input validation is scattered across route handlers. No centralized schema validation for request bodies.
-
-**Recommendation**:
-- Use **Zod** (already a dependency) for request body validation middleware
-- Create schemas for each endpoint's expected input
-- Return structured validation errors with field-level detail
-- Estimated effort: 2-3 days
-
-#### 3.5 Implement Webhook/Event System (Priority: LOW)
-
-**Problem**: No way to notify external systems when intake events occur (completed, flagged, reviewed). County IT systems may need integration points.
-
-**Recommendation**:
-- Add webhook registration for key events (intake completed, high-risk flagged)
-- Use an event emitter pattern internally for loose coupling
-- Document webhook payload schemas
-- Estimated effort: 3-4 days
-
-#### 3.6 Add Database Soft Deletes (Priority: LOW)
-
-**Problem**: Caseworker deactivation and data deletion are hard deletes. For government compliance, soft deletes with retention policies may be required.
-
-**Recommendation**:
-- Add `deletedAt` timestamp field to Caseworker and other applicable models
-- Filter soft-deleted records in queries by default
-- Add admin endpoint to permanently purge records after retention period
-- Estimated effort: 1-2 days
-
-#### 3.7 Implement Rate Limiting Per-User (Priority: MEDIUM)
-
-**Problem**: Rate limiting exists but is IP-based. Shared kiosk IPs could affect all users. No per-user or per-session throttling.
-
-**Recommendation**:
-- Add session-token-based rate limiting for intake endpoints
-- Add user-ID-based rate limiting for authenticated endpoints
-- Use Redis-backed rate limiter for distributed deployments
-- Estimated effort: 1-2 days
+## All Improvement Recommendations (Master Table)
+
+| # | Improvement | Team | Priority | Problem | Recommendation | Effort |
+|---|------------|------|----------|---------|---------------|--------|
+| 1 | Redis Session Store | Architect | CRITICAL | Sessions stored in JS `Map()` in memory. Server restart = all active sessions lost. Blocks horizontal scaling. | Introduce Redis via `ioredis` for session storage, system prompt caching, and rate limiting. Enable shared session store for multi-instance deployments. | 2-3 days |
+| 2 | Structured Logging & Observability | Architect | HIGH | All logging is `console.log`/`console.error` to stdout. No APM, error tracking, or performance metrics. | Adopt Pino or Winston for structured JSON logging. Integrate Sentry for error tracking. Add response time middleware + Prometheus `/metrics` endpoint. | 3-4 days |
+| 3 | API Versioning | Architect | MEDIUM | Routes have no version prefix. Any breaking change affects all clients immediately. | Prefix all routes with `/api/v1/`. Document deprecation policy. | 1 day |
+| 4 | CI/CD Pipeline | Architect | MEDIUM | Docker files exist but no CI/CD config. Deployment is likely manual. | Add GitHub Actions for lint, test, build, deploy. Implement staging environment. Add DB migration step to pipeline. | 3-5 days |
+| 5 | Database Connection Pooling | Architect | MEDIUM | No explicit connection pooling config. Under load, DB connections could exhaust. | Configure Prisma `connection_limit`. Add PgBouncer for production. Add query logging in dev. | 1-2 days |
+| 6 | Global State Management | Frontend | HIGH | Every page independently fetches data. Auth checked via `localStorage` in every component's `useEffect`. User context duplicated across pages. | Introduce React Context for auth state. Create `AuthProvider` for login/logout/token refresh. Consider TanStack Query for server state with caching. | 2-3 days |
+| 7 | Route Guards | Frontend | HIGH | Route protection is per-component `useEffect` checks. No centralized protection. Users briefly see protected content before redirect. | Create `<ProtectedRoute>` wrapper. Implement `<RequireRole>` for role-based guards. Add loading state during auth verification. | 1 day |
+| 8 | Code Splitting & Lazy Loading | Frontend | MEDIUM | All pages bundled into single chunk. Users download entire app even if they only use intake form. | Use `React.lazy()` + `Suspense` for route-level splitting. Lazy-load dashboard pages. Add loading fallback components. | 1 day |
+| 9 | Frontend Testing | Frontend | HIGH | Zero frontend test files. No test config. Critical flows (intake chat, session timeout, login) untested. | Set up Vitest + React Testing Library. Test IntakePage, LoginPage, ChatInterface, ReviewSummary, SessionTimeoutWarning. Add Playwright for E2E. | 5-7 days |
+| 10 | Error Boundaries | Frontend | MEDIUM | No React Error Boundary components. Unhandled JS error crashes entire app with white screen. | Add top-level `<ErrorBoundary>` with friendly fallback. Add route-level boundaries. Log caught errors to backend. | 1 day |
+| 11 | TypeScript Migration | Frontend | MEDIUM | Frontend is vanilla JS despite TS in project root. Complex state shapes are error-prone without types. | Incrementally adopt TS starting with shared types/interfaces. Define types for API responses, intake state, component props. | 3-5 days |
+| 12 | Mobile/Kiosk Optimization | Frontend | MEDIUM | Chat interface could be better optimized for kiosk/tablet use in government offices. | Add touch-optimized gestures. Increase button/input sizes for touch screens. Add PWA support for offline resilience. | 3-4 days |
+| 13 | Skeleton Loading States | Frontend | LOW | Loading states use simple "Loading..." text. Dashboards show blank white space during data fetch. | Add skeleton components for dashboard cards, intake lists, detail views. | 1-2 days |
+| 14 | OpenAPI/Swagger Documentation | Backend | HIGH | No API documentation. Developers must read route handlers to understand endpoints. | Add swagger-jsdoc + swagger-ui-express. Document all endpoints with schemas, error codes, auth. Serve at `/api/docs`. | 2-3 days |
+| 15 | Background Job Processing | Backend | MEDIUM | CSV export runs synchronously and blocks request. No infra for async needs (email, reports). | Introduce BullMQ with Redis. Move CSV export to async job. Prepare for email notifications, scheduled reports. | 3-4 days |
+| 16 | API Route Integration Tests | Backend | HIGH | Tests cover business logic but don't test HTTP endpoints. No full request/response cycle tests. | Add Supertest. Test auth flows, intake lifecycle, error scenarios, admin operations. | 4-5 days |
+| 17 | Request Validation Middleware | Backend | MEDIUM | Input validation scattered across route handlers. No centralized schema validation. | Use Zod (already a dependency) for request body validation middleware. Create schemas per endpoint. Return structured field-level errors. | 2-3 days |
+| 18 | Webhook/Event System | Backend | LOW | No way to notify external systems on intake events. County IT may need integration points. | Add webhook registration for key events. Use event emitter pattern internally. Document payload schemas. | 3-4 days |
+| 19 | Database Soft Deletes | Backend | LOW | Caseworker deactivation uses hard deletes. Government compliance may require retention. | Add `deletedAt` field. Filter soft-deleted records by default. Add admin purge endpoint after retention period. | 1-2 days |
+| 20 | Per-User Rate Limiting | Backend | MEDIUM | Rate limiting is IP-based. Shared kiosk IPs affect all users. No per-session throttling. | Add session-token-based limiting for intake. Add user-ID-based limiting for auth endpoints. Use Redis-backed limiter. | 1-2 days |
 
 ---
 
 ## Prioritized Implementation Roadmap
 
 ### Phase 1: Stability & Security (Weeks 1-2)
-| # | Item | Owner | Effort |
-|---|------|-------|--------|
-| 1 | Redis session store | Architect + Backend | 2-3 days |
-| 2 | Auth context + route guards | Frontend | 2 days |
-| 3 | Error boundaries | Frontend | 1 day |
-| 4 | Structured logging (Pino + Sentry) | Backend | 3 days |
+
+| # | Item | Owner | Effort | Dependencies | Risk if Skipped |
+|---|------|-------|--------|-------------|----------------|
+| 1 | Redis session store | Architect + Backend | 2-3 days | Redis infrastructure | Session loss on restart, no horizontal scaling |
+| 7 | Auth context + route guards | Frontend | 2 days | None | Content flash, duplicated auth logic |
+| 10 | Error boundaries | Frontend | 1 day | None | White screen crashes in production |
+| 2 | Structured logging (Pino + Sentry) | Backend | 3 days | Sentry account | Blind to production errors |
 
 ### Phase 2: Quality & Testing (Weeks 3-4)
-| # | Item | Owner | Effort |
-|---|------|-------|--------|
-| 5 | Frontend test setup + critical tests | Frontend | 5-7 days |
-| 6 | API route integration tests | Backend | 4-5 days |
-| 7 | OpenAPI documentation | Backend | 2-3 days |
-| 8 | Zod request validation middleware | Backend | 2-3 days |
+
+| # | Item | Owner | Effort | Dependencies | Risk if Skipped |
+|---|------|-------|--------|-------------|----------------|
+| 9 | Frontend test setup + critical tests | Frontend | 5-7 days | None | Regressions in intake flow |
+| 16 | API route integration tests | Backend | 4-5 days | None | Broken endpoints undetected |
+| 14 | OpenAPI documentation | Backend | 2-3 days | None | Slow onboarding, integration friction |
+| 17 | Zod request validation middleware | Backend | 2-3 days | None | Inconsistent validation, poor error messages |
 
 ### Phase 3: Performance & DX (Weeks 5-6)
-| # | Item | Owner | Effort |
-|---|------|-------|--------|
-| 9 | Code splitting + lazy loading | Frontend | 1 day |
-| 10 | Background job processing (BullMQ) | Backend | 3-4 days |
-| 11 | CI/CD pipeline (GitHub Actions) | Architect | 3-5 days |
-| 12 | Database connection pooling | Architect | 1-2 days |
+
+| # | Item | Owner | Effort | Dependencies | Risk if Skipped |
+|---|------|-------|--------|-------------|----------------|
+| 8 | Code splitting + lazy loading | Frontend | 1 day | None | Slow initial load for applicants |
+| 15 | Background job processing (BullMQ) | Backend | 3-4 days | Redis (from Phase 1) | Export timeouts, no async infra |
+| 4 | CI/CD pipeline (GitHub Actions) | Architect | 3-5 days | Test suites (from Phase 2) | Manual deployment, no quality gates |
+| 5 | Database connection pooling | Architect | 1-2 days | None | Connection exhaustion under load |
 
 ### Phase 4: Polish & Scale (Weeks 7-8)
-| # | Item | Owner | Effort |
-|---|------|-------|--------|
-| 13 | TypeScript migration (incremental) | Frontend | 3-5 days |
-| 14 | Mobile/kiosk optimization + PWA | Frontend | 3-4 days |
-| 15 | API versioning | Architect | 1 day |
-| 16 | Skeleton loading states | Frontend | 1-2 days |
-| 17 | Per-user rate limiting | Backend | 1-2 days |
-| 18 | Webhook/event system | Backend | 3-4 days |
+
+| # | Item | Owner | Effort | Dependencies | Risk if Skipped |
+|---|------|-------|--------|-------------|----------------|
+| 11 | TypeScript migration (incremental) | Frontend | 3-5 days | None | Type errors in complex state shapes |
+| 12 | Mobile/kiosk optimization + PWA | Frontend | 3-4 days | None | Poor kiosk experience |
+| 3 | API versioning | Architect | 1 day | None | Breaking changes affect all clients |
+| 13 | Skeleton loading states | Frontend | 1-2 days | None | Poor perceived performance |
+| 20 | Per-user rate limiting | Backend | 1-2 days | Redis (from Phase 1) | Kiosk IP collisions |
+| 18 | Webhook/event system | Backend | 3-4 days | None | No external system integration |
 
 ---
 
 ## What's Working Well (Keep Doing)
 
-- **Security-first design**: PII stripping, injection guards, audit trail - excellent for government context
-- **Accessibility**: WCAG 2.1 AA compliance with skip links, ARIA, focus management, reduced motion
-- **AI resilience**: Circuit breaker with automatic failover is production-ready
-- **Conversational UX**: Chat-based intake is more engaging than traditional forms
-- **SNAP calculation accuracy**: Well-tested with persona-based scenarios
-- **Consistency checking**: 14-rule risk scoring catches data integrity issues before caseworker review
-- **Minimal PII collection**: Only first name + last initial stored - strong privacy posture
-- **Bilingual support**: English/Spanish from day one
+| Strength | Details |
+|----------|---------|
+| Security-first design | PII stripping, injection guards, audit trail - excellent for government context |
+| Accessibility | WCAG 2.1 AA with skip links, ARIA, focus management, reduced motion support |
+| AI resilience | Circuit breaker with automatic Claude-to-OpenAI failover is production-ready |
+| Conversational UX | Chat-based intake is more engaging than traditional multi-step forms |
+| SNAP calculation accuracy | Well-tested with persona-based scenarios and 380-line calculator |
+| Consistency checking | 14-rule risk scoring catches data integrity issues before caseworker review |
+| Minimal PII collection | Only first name + last initial stored - strong privacy posture |
+| Bilingual support | English/Spanish language selection from day one |
 
 ---
 
 ## Key Metrics to Track Post-Improvements
 
-| Metric | Current Baseline | Target |
-|--------|-----------------|--------|
-| Intake completion rate | Unknown | >85% |
-| Average intake duration | Unknown | <15 min |
-| Frontend error rate | Unknown (no tracking) | <0.1% |
-| API p95 latency | Unknown (no APM) | <500ms |
-| AI failover frequency | Logged but not tracked | <1% of requests |
-| Test coverage (backend) | ~60% business logic | >80% overall |
-| Test coverage (frontend) | 0% | >50% critical paths |
-| Accessibility score | High (manual) | 100 Lighthouse |
-| Uptime | Unknown | 99.9% |
+| Metric | Current Baseline | Target | Owner | Tracking Method |
+|--------|-----------------|--------|-------|----------------|
+| Intake completion rate | Unknown | >85% | Frontend + Backend | Analytics dashboard |
+| Average intake duration | Unknown | <15 min | Backend | Audit log timestamps |
+| Frontend error rate | Unknown (no tracking) | <0.1% | Frontend | Sentry (Phase 1) |
+| API p95 latency | Unknown (no APM) | <500ms | Backend | Prometheus metrics (Phase 1) |
+| AI failover frequency | Logged but not tracked | <1% of requests | Architect | Health endpoint + alerts |
+| Test coverage (backend) | ~60% business logic | >80% overall | Backend | CI pipeline (Phase 3) |
+| Test coverage (frontend) | 0% | >50% critical paths | Frontend | CI pipeline (Phase 3) |
+| Accessibility score | High (manual) | 100 Lighthouse | Frontend | CI Lighthouse audit |
+| Uptime | Unknown | 99.9% | Architect | External monitoring |
+
+---
+
+## Effort Summary by Team
+
+| Team | Total Items | Total Effort (days) | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
+|------|------------|--------------------:|---------|---------|---------|---------|
+| System Architect | 5 | 11-16 | 2-3 | — | 4-7 | 1 |
+| Frontend Developer | 8 | 17-24 | 3 | 5-7 | 1 | 8-12 |
+| Backend Developer | 7 | 18-24 | 3 | 9-11 | 3-4 | 4-6 |
+| **Total** | **20** | **46-64** | **8-9** | **14-18** | **8-12** | **13-19** |
