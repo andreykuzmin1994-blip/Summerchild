@@ -19,6 +19,8 @@ async function runConsistencyChecks(intake, calculations, fiscalYear = 2026) {
   flags.push(...checkMedicalExpenseReasonableness(intake));
   flags.push(...checkMultipleAdultsNoIncome(intake));
   flags.push(...checkPossibleUnreportedBenefits(intake));
+  flags.push(...checkSeasonalIncomePattern(intake));
+  flags.push(...checkPossibleStudentInHousehold(intake));
 
   const riskScore = deriveRiskScore(flags);
 
@@ -444,6 +446,95 @@ function checkPossibleUnreportedBenefits(intake) {
   return flags;
 }
 
+/**
+ * Flag employment income that's suspiciously low for a working-age adult.
+ * Monthly equivalent < $600 is below 20 hrs/wk at minimum wage — if the
+ * applicant works in a seasonal industry (construction, agriculture,
+ * landscaping, food service, tourism), they may be reporting off-season
+ * or partial-month income instead of a typical month.
+ *
+ * Skips elderly/disabled applicants who legitimately work very few hours.
+ */
+function checkSeasonalIncomePattern(intake) {
+  const flags = [];
+  const incomeSources = intake.incomeSources || [];
+  const shelter = intake.shelterExpense;
+  const members = intake.householdMembers || [];
+
+  // Skip if applicant is elderly or disabled (legitimate part-time work)
+  const applicantPhantom = members.find((m) => m.id === "__applicant__");
+  if (applicantPhantom && (applicantPhantom.isElderly || applicantPhantom.isDisabled)) {
+    return flags;
+  }
+
+  const FREQ_MULT = { WEEKLY: 4.333, BIWEEKLY: 2.167, SEMI_MONTHLY: 2, MONTHLY: 1, ANNUALLY: 1 / 12 };
+
+  for (const source of incomeSources) {
+    if (source.incomeType !== "EMPLOYMENT") continue;
+
+    const mult = FREQ_MULT[source.payFrequency] || 1;
+    const monthlyEquiv = Math.round(source.grossAmountPerPeriod * mult);
+
+    if (monthlyEquiv < 600 && shelter && (shelter.rentOrMortgage || 0) > 0) {
+      flags.push({
+        type: "SEASONAL_INCOME_POSSIBLE",
+        severity: "MEDIUM",
+        field: "income",
+        message: `Employment income ~$${monthlyEquiv}/mo is below 20 hrs/wk at minimum wage — if seasonal (construction, agriculture, food service, landscaping), verify this reflects a typical month`,
+        suggestedAction: "Ask: 'Is this job seasonal or year-round? What does a typical month look like during your busy season?'",
+      });
+    }
+  }
+
+  return flags;
+}
+
+/**
+ * Flag household members aged 18–24 with no income — they may be
+ * college/university students. Under SNAP rules, students enrolled
+ * at least half-time in higher education are generally ineligible
+ * unless they meet an exemption (20+ hrs/wk work, work-study,
+ * single parent of child under 6/12, TANF recipient, etc.).
+ *
+ * This is a soft flag — many 18–24 year-olds are NOT students,
+ * but it's the #1 student-age bracket and worth verifying.
+ */
+function checkPossibleStudentInHousehold(intake) {
+  const flags = [];
+  const members = intake.householdMembers || [];
+  const incomeSources = intake.incomeSources || [];
+
+  for (const member of members) {
+    if (!member.inSnapHousehold) continue;
+    if (member.id === "__applicant__") continue;
+
+    // Parse starting age from range like "18-24", "20-24"
+    const match = member.ageRange && member.ageRange.match(/^(\d+)/);
+    if (!match) continue;
+    const startAge = parseInt(match[1]);
+    if (startAge < 18 || startAge > 24) continue;
+
+    // Check if member has any income
+    const hasIncome =
+      member.hasEarnedIncome ||
+      member.hasUnearnedIncome ||
+      incomeSources.some((s) => s.householdMemberId === member.id);
+
+    if (!hasIncome) {
+      flags.push({
+        type: "POSSIBLE_STUDENT_NO_EXEMPTION",
+        severity: "MEDIUM",
+        field: "household",
+        member: member.displayName,
+        message: `${member.displayName} (age ${member.ageRange}) has no income — if enrolled in higher education, verify SNAP student exemption status`,
+        suggestedAction: "Ask if enrolled in college/university. If yes, verify exemption: 20+ hrs/wk employment, work-study, parent of child under 6, TANF, or unable to work",
+      });
+    }
+  }
+
+  return flags;
+}
+
 function deriveRiskScore(flags) {
   const hasHigh = flags.some((f) => f.severity === "HIGH");
   const hasMedium = flags.some((f) => f.severity === "MEDIUM");
@@ -467,4 +558,6 @@ module.exports = {
   checkMedicalExpenseReasonableness,
   checkMultipleAdultsNoIncome,
   checkPossibleUnreportedBenefits,
+  checkSeasonalIncomePattern,
+  checkPossibleStudentInHousehold,
 };
