@@ -18,10 +18,10 @@ const {
   sanitizeForDisplay,
   validateDataBlockCount,
   sanitizeAIResponse,
-  checkTopicRelevance,
   scanOutputForPII,
   blockExfiltration,
 } = require("../middleware/outputSanitizer");
+const { validateConversationContext } = require("../middleware/conversationContext");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
 
@@ -627,17 +627,52 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       });
     }
 
-    // Guard 4: Topic relevance — detect hijacked or off-topic responses
-    const topicCheck = checkTopicRelevance(aiResponse.displayMessage);
-    if (!topicCheck.onTopic) {
-      log.warn("Off-topic AI response detected — possible prompt injection success", {
-        correlationId: req.correlationId,
-        intakeId: intake.id,
-        topicScore: topicCheck.score,
-        reason: topicCheck.reason,
-      });
-      // Don't block, but flag for monitoring. The response may still be useful
-      // (e.g., the model answering a tangential but legitimate applicant question).
+    // Guard 4: Section-aware context validation — the strongest signal.
+    // Checks three axes: are the data fields appropriate for the current
+    // section? Does the response vocabulary match the section? Does the
+    // response contain forbidden content (eligibility claims, PII requests)?
+    const currentSection = determineCurrentSection(session.conversationHistory);
+    const contextCheck = validateConversationContext(
+      currentSection,
+      aiResponse.displayMessage,
+      aiResponse.extractedData,
+    );
+
+    if (!contextCheck.ok) {
+      // Log all failures for monitoring
+      if (!contextCheck.fieldCheck.valid) {
+        log.warn("Unexpected data fields for current section", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          section: currentSection,
+          unexpectedFields: contextCheck.fieldCheck.unexpectedFields,
+        });
+      }
+      if (!contextCheck.relevanceCheck.relevant) {
+        log.warn("Off-topic AI response for current section", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          section: currentSection,
+          score: contextCheck.relevanceCheck.score,
+          reason: contextCheck.relevanceCheck.reason,
+        });
+      }
+      if (!contextCheck.forbiddenCheck.clean) {
+        log.error("Forbidden content detected in AI response", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          violations: contextCheck.forbiddenCheck.violations,
+        });
+        // Forbidden content is a hard block — return safe fallback
+        return res.json({
+          message: "I need to stay focused on your SNAP application. Could you repeat your last answer?",
+          section: currentSection,
+          extractedData: [],
+          model: aiResponse.model,
+        });
+      }
+      // Field mismatches and low relevance are soft warnings — log but don't block.
+      // The AI sometimes legitimately transitions between sections mid-turn.
     }
 
     // Guard 5: Canary trip check (handled in aiAssistant.js — logged but double-check)
