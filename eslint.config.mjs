@@ -3,9 +3,9 @@ import jsxA11y from "eslint-plugin-jsx-a11y";
 import security from "eslint-plugin-security";
 
 export default [
-  // ── Backend (Node.js) ──────────────────────────────────────────────
+  // ── Backend (Node.js — CommonJS) ───────────────────────────────────
   {
-    files: ["src/**/*.js", "tests/**/*.js"],
+    files: ["src/**/*.js"],
     ...js.configs.recommended,
     plugins: { security },
     languageOptions: {
@@ -25,14 +25,6 @@ export default [
         clearTimeout: "readonly",
         clearInterval: "readonly",
         URL: "readonly",
-        describe: "readonly",
-        it: "readonly",
-        expect: "readonly",
-        beforeEach: "readonly",
-        afterEach: "readonly",
-        beforeAll: "readonly",
-        afterAll: "readonly",
-        vi: "readonly",
       },
     },
     rules: {
@@ -70,6 +62,43 @@ export default [
           message: "Possible hardcoded API key or secret detected — use environment variables",
         },
       ],
+    },
+  },
+
+  // ── Tests (ES Modules — Vitest) ────────────────────────────────────
+  {
+    files: ["tests/**/*.js"],
+    ...js.configs.recommended,
+    plugins: { security },
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        require: "readonly",
+        module: "readonly",
+        exports: "readonly",
+        process: "readonly",
+        console: "readonly",
+        setTimeout: "readonly",
+        setInterval: "readonly",
+        clearTimeout: "readonly",
+        clearInterval: "readonly",
+        // Vitest globals
+        describe: "readonly",
+        it: "readonly",
+        expect: "readonly",
+        beforeEach: "readonly",
+        afterEach: "readonly",
+        beforeAll: "readonly",
+        afterAll: "readonly",
+        vi: "readonly",
+      },
+    },
+    rules: {
+      "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      "no-undef": "error",
+      "eqeqeq": ["error", "always"],
+      "security/detect-object-injection": "warn",
     },
   },
 

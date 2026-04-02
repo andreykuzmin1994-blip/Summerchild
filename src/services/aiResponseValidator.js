@@ -115,7 +115,7 @@ const SCHEMA_MAP = {
  * Validate an AI-extracted data block against its Zod schema.
  *
  * @param {Object} dataBlock - Parsed JSON from <!--CUSHION_DATA:...-->
- * @returns {{ valid: boolean, data?: Object, errors?: string[] }}
+ * @returns {{ valid: boolean, data?: Object, errors?: string[], warnings?: string[] }}
  */
 function validateAIResponse(dataBlock) {
   if (!dataBlock || typeof dataBlock !== "object") {

@@ -19,12 +19,10 @@
   "include": [
     "src/services/snapCalculator.js",
     "src/services/dataValidator.js",
-    "src/services/aiProvider.js",
     "src/services/consistencyChecker.js",
     "src/services/aiResponseValidator.js",
     "src/services/dbRetry.js",
-    "src/services/logger.js",
-    "src/services/sessionStore.js"
+    "src/services/logger.js"
   ],
   "exclude": ["node_modules"]
 }

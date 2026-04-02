@@ -130,7 +130,7 @@ async function startServer() {
     }
 
     // Validate system prompt contains no PII
-    const apiKeyPlaceholder = "sk-ant" + "-..."; // eslint-disable-line prefer-template
+    const apiKeyPlaceholder = "sk-ant" + "-...";
     if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !== apiKeyPlaceholder) {
       const systemPrompt = await buildSystemPrompt("GA", 2026);
       validateSystemPrompt(systemPrompt);

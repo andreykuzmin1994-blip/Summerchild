@@ -53,11 +53,11 @@ function isTransientError(error) {
  * Execute a database operation with automatic retry on transient errors.
  *
  * @param {Function} operation - Async function that performs the database operation
- * @param {Object} options - Configuration options
- * @param {string} options.context - Description of the operation (for logging)
- * @param {number} options.maxRetries - Maximum retry attempts (default: 3)
- * @param {number} options.baseDelayMs - Base delay for exponential backoff (default: 200ms)
- * @param {string} options.correlationId - Optional correlation ID for log tracing
+ * @param {Object} [options] - Configuration options
+ * @param {string} [options.context] - Description of the operation (for logging)
+ * @param {number} [options.maxRetries] - Maximum retry attempts (default: 3)
+ * @param {number} [options.baseDelayMs] - Base delay for exponential backoff (default: 200ms)
+ * @param {string} [options.correlationId] - Optional correlation ID for log tracing
  * @returns {Promise<*>} Result of the operation
  */
 async function withRetry(operation, options = {}) {
