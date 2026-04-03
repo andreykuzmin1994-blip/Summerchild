@@ -294,6 +294,10 @@ model Intake {
   reviews          IntakeReview[]
   auditLogs        AuditLog[]
 
+  @@index([countyId, createdAt(sort: Desc)])
+  @@index([countyId, status])
+  @@index([countyId, riskScore])
+  @@index([countyId, expeditedFlag])
   @@map("intakes")
 }
 
@@ -398,6 +402,7 @@ model ConversationLog {
 
   intake     Intake           @relation(fields: [intakeId], references: [id])
 
+  @@index([intakeId, turnNumber])
   @@map("conversation_logs")
 }
 
@@ -429,6 +434,7 @@ model IntakeReview {
   intake          Intake          @relation(fields: [intakeId], references: [id])
   caseworker      Caseworker      @relation(fields: [caseworkerId], references: [id])
 
+  @@index([caseworkerId, correctionsMade])
   @@map("intake_reviews")
 }
 
@@ -445,5 +451,7 @@ model AuditLog {
 
   intake     Intake?  @relation(fields: [intakeId], references: [id])
 
+  @@index([countyId, timestamp(sort: Desc)])
+  @@index([eventType])
   @@map("audit_logs")
 }

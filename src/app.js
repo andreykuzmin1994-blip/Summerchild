@@ -26,17 +26,34 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'"],
       imgSrc: ["'self'", "data:"],
+      fontSrc: ["'self'"],
+      connectSrc: ["'self'"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
     },
   },
   hsts: { maxAge: 31536000, includeSubDomains: true },
+  referrerPolicy: { policy: "no-referrer" },
 }));
 
-// CORS
+// CORS — validate origin in production
+const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:5173";
+if (process.env.NODE_ENV === "production") {
+  if (!corsOrigin || corsOrigin === "*" || corsOrigin.includes("localhost")) {
+    throw new Error("CORS_ORIGIN must be a specific HTTPS domain in production (not wildcard or localhost)");
+  }
+  if (!corsOrigin.startsWith("https://")) {
+    throw new Error("CORS_ORIGIN must use HTTPS in production");
+  }
+}
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || "http://localhost:5173",
+  origin: corsOrigin,
   credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Session-Token"],
+  maxAge: 3600,
 }));
 
 // Body parsing

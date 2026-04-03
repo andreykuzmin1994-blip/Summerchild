@@ -50,6 +50,26 @@ function validateApplicant(applicant) {
   return errors;
 }
 
+/**
+ * Validate displayName is in "FirstName L." format only.
+ * Prevents full names from being stored (PII minimization).
+ */
+function validateDisplayName(displayName) {
+  const errors = [];
+  if (!displayName || displayName.length < 2) {
+    errors.push("Display name is required (minimum 2 characters)");
+    return errors;
+  }
+  if (displayName.length > 50) {
+    errors.push("Display name too long — use first name and last initial only");
+  }
+  // Allow: "Maria G.", "Maria G", "Jean-Pierre L.", "Mary Jo K."
+  if (!/^[A-Za-z][A-Za-z' -]+\s[A-Z]\.?$/.test(displayName)) {
+    errors.push("Display name must be in 'FirstName LastInitial' format (e.g., 'Maria G.')");
+  }
+  return errors;
+}
+
 function validateShelterExpense(shelter) {
   const errors = [];
 
@@ -118,6 +138,7 @@ module.exports = {
   validateIncomeEntry,
   validateHouseholdMember,
   validateApplicant,
+  validateDisplayName,
   validateShelterExpense,
   validateExtractedData,
 };

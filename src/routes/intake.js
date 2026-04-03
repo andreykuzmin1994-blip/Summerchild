@@ -4,12 +4,12 @@ const { v4: uuidv4 } = require("uuid");
 const { buildSystemPrompt, sendMessage, determineCurrentSection } = require("../services/aiAssistant");
 const { PIIStripper } = require("../middleware/piiStripper");
 const { injectionGuardMiddleware } = require("../middleware/injectionGuard");
-const { validateExtractedData } = require("../services/dataValidator");
+const { validateExtractedData, validateDisplayName } = require("../services/dataValidator");
 const { validateAIResponse } = require("../services/aiResponseValidator");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { runConsistencyChecks } = require("../services/consistencyChecker");
-const { aiMessageLimiter } = require("../middleware/rateLimiter");
+const { aiMessageLimiter, intakeStartLimiter } = require("../middleware/rateLimiter");
 const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
 const { withRetry } = require("../services/dbRetry");
@@ -392,12 +392,13 @@ async function generateDocumentChecklist(intakeId) {
  * Start a new intake session. Returns session token, queue number, and welcome message.
  * Expects: { countyId, language, displayName } where displayName is "FirstName L." format.
  */
-router.post("/start", requireStaffPin, async (req, res) => {
+router.post("/start", requireStaffPin, intakeStartLimiter, async (req, res) => {
   try {
     const { countyId, language, displayName } = req.body;
 
-    if (!displayName || displayName.length < 2) {
-      return res.status(400).json({ error: "Please provide your first name and last initial (e.g., 'Maria G.')" });
+    const nameErrors = validateDisplayName(displayName);
+    if (nameErrors.length > 0) {
+      return res.status(400).json({ error: nameErrors[0] });
     }
 
     const sessionToken = uuidv4();
@@ -559,6 +560,12 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
     }
 
     await sessionStore.touch(sessionToken);
+
+    // Session expiration warning (5 minutes before timeout)
+    const timeRemaining = SESSION_TTL_MS - (Date.now() - session.lastActivity);
+    const sessionExpiringWarning = timeRemaining < 5 * 60 * 1000
+      ? { secondsRemaining: Math.round(timeRemaining / 1000), message: "Your session will expire soon due to inactivity. Please continue with your application." }
+      : undefined;
 
     // Verify session matches intake
     const intake = await prisma.intake.findFirst({
@@ -786,6 +793,7 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       section,
       extractedData: validatedData,
       model: aiResponse.model,
+      ...(sessionExpiringWarning && { sessionExpiringWarning }),
     });
   } catch (error) {
     log.error("Failed to process message", {
@@ -879,6 +887,21 @@ router.post("/:id/complete", async (req, res) => {
 
     if (!intake) {
       return res.status(404).json({ error: "Active intake not found" });
+    }
+
+    // Validate minimum data before allowing completion
+    const completionErrors = [];
+    if (!intake.applicant) {
+      completionErrors.push("Applicant information is missing");
+    }
+    if ((intake.incomeSources || []).length === 0 && (intake.householdMembers || []).length === 0) {
+      completionErrors.push("No income sources or household members recorded — at minimum, applicant income is required");
+    }
+    if (completionErrors.length > 0) {
+      return res.status(400).json({
+        error: "Intake cannot be completed — missing required information",
+        details: completionErrors,
+      });
     }
 
     // Run calculations

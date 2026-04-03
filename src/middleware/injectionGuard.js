@@ -88,17 +88,19 @@ const INJECTION_PATTERNS = [
   /(?:sudo|admin|root) mode/i,
 ];
 
+// Structural injection patterns — XML-like, bracket enclosure, delimiter injection
+const STRUCTURAL_PATTERNS = [
+  /\[(?:SYSTEM|RULES|INSTRUCTIONS|PROMPT|ADMIN|OVERRIDE)\]/i,
+  /(?:---+|===+)\s*(?:SYSTEM|RULES|PROMPT|INSTRUCTIONS)/i,
+  /\b(?:instructions|rules|prompt|system):\s*[{\[\n]/i,
+  /```(?:system|prompt|instructions|rules)/i,
+  /<\/?(?:system|prompt|instructions|rules)>/i,
+];
+
 const INJECTION_RESPONSE =
   "I didn't quite catch that. Could you rephrase? I'm here to help with your SNAP application.";
 
-// Generous length limit: a long rambling answer from an ESL applicant
-// about their family situation could easily be 400+ words.
-// 4000 chars (~600 words) accommodates genuine answers while still
-// blocking adversarial prompt-stuffing attacks.
-const MAX_INPUT_LENGTH = 4000;
-
-// Special character threshold: raised to avoid false positives from
-// applicants typing dollar amounts, addresses with slashes, etc.
+const MAX_INPUT_LENGTH = 2000;
 const SPECIAL_CHAR_THRESHOLD = 0.25;
 
 /**
@@ -123,10 +125,16 @@ function checkForInjection(userInput) {
     }
   }
 
-  // Encoding attack detection: base64, hex, rot13 payloads
-  const encodingCheck = detectEncodedPayload(normalized);
-  if (encodingCheck.detected) {
-    return { blocked: true, reason: `encoded_payload_${encodingCheck.encoding}` };
+  // Structural pattern matching
+  for (const pattern of STRUCTURAL_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { blocked: true, reason: `structural_injection: ${pattern.source}` };
+    }
+  }
+
+  // Length-based heuristic
+  if (normalized.length > MAX_INPUT_LENGTH) {
+    return { blocked: true, reason: "excessive_length" };
   }
 
   // High ratio of special characters or code-like syntax
@@ -184,6 +192,5 @@ module.exports = {
   injectionGuardMiddleware,
   INJECTION_RESPONSE,
   INJECTION_PATTERNS,
-  normalizeUnicode,
-  detectEncodedPayload,
+  STRUCTURAL_PATTERNS,
 };

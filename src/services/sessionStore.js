@@ -200,12 +200,14 @@ function createSessionStore() {
     }
   }
 
+  if (process.env.NODE_ENV === "production") {
+    log.error("REDIS_URL is required in production for session persistence and multi-instance support");
+    throw new Error("REDIS_URL environment variable is required in production. In-memory sessions are not safe for production use.");
+  }
+
   const store = new MemorySessionStore();
   store.startCleanup();
-
-  if (process.env.NODE_ENV === "production") {
-    log.warn("Using in-memory session store in production — set REDIS_URL for multi-instance support");
-  }
+  log.info("Using in-memory session store (development mode)");
 
   return store;
 }
