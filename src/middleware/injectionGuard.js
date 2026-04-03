@@ -21,11 +21,20 @@ const INJECTION_PATTERNS = [
   /(?:sudo|admin|root) mode/i,
 ];
 
+// Structural injection patterns — XML-like, bracket enclosure, delimiter injection
+const STRUCTURAL_PATTERNS = [
+  /\[(?:SYSTEM|RULES|INSTRUCTIONS|PROMPT|ADMIN|OVERRIDE)\]/i,
+  /(?:---+|===+)\s*(?:SYSTEM|RULES|PROMPT|INSTRUCTIONS)/i,
+  /\b(?:instructions|rules|prompt|system):\s*[{\[\n]/i,
+  /```(?:system|prompt|instructions|rules)/i,
+  /<\/?(?:system|prompt|instructions|rules)>/i,
+];
+
 const INJECTION_RESPONSE =
   "I didn't quite catch that. Could you rephrase? I'm here to help with your SNAP application.";
 
 const MAX_INPUT_LENGTH = 2000;
-const SPECIAL_CHAR_THRESHOLD = 0.15;
+const SPECIAL_CHAR_THRESHOLD = 0.25;
 
 /**
  * Check user input for prompt injection attempts.
@@ -38,6 +47,13 @@ function checkForInjection(userInput) {
   for (const pattern of INJECTION_PATTERNS) {
     if (pattern.test(normalized)) {
       return { blocked: true, reason: pattern.source };
+    }
+  }
+
+  // Structural pattern matching
+  for (const pattern of STRUCTURAL_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { blocked: true, reason: `structural_injection: ${pattern.source}` };
     }
   }
 
@@ -81,4 +97,5 @@ module.exports = {
   injectionGuardMiddleware,
   INJECTION_RESPONSE,
   INJECTION_PATTERNS,
+  STRUCTURAL_PATTERNS,
 };
