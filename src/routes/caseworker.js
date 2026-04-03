@@ -218,7 +218,16 @@ router.get("/intake/:id", requireAuth, async (req, res) => {
  */
 router.post("/intake/:id/review", requireAuth, async (req, res) => {
   try {
-    const { correctionsMade, correctionType, notes } = req.body;
+    const { correctionsMade, correctionType, correctionDetails, notes, reviewerConfirmsAllData } = req.body;
+
+    // Mandatory review confirmation — caseworker must explicitly confirm review
+    if (!reviewerConfirmsAllData) {
+      return res.status(400).json({
+        error: "Must confirm review of all extracted data before finalizing",
+        requiresConfirmation: true,
+        hint: "Set reviewerConfirmsAllData: true to confirm you have reviewed all intake data",
+      });
+    }
 
     const intake = await prisma.intake.findFirst({
       where: { id: req.params.id, countyId: req.user.countyId },
@@ -246,15 +255,39 @@ router.post("/intake/:id/review", requireAuth, async (req, res) => {
       },
     });
 
+    // Detailed audit trail with before/after values for corrections
     await logAuditEvent({
-      type: correctionsMade ? EVENTS.CASEWORKER_CORRECTION : EVENTS.CASEWORKER_REVIEWED_INTAKE,
+      type: EVENTS.CASEWORKER_REVIEW_CONFIRMED,
       actorType: ACTORS.CASEWORKER,
       actorId: req.user.id,
       intakeId: intake.id,
       countyId: req.user.countyId,
       ip: req.ip,
-      details: { correctionsMade, correctionType, notes },
+      details: {
+        reviewerConfirmed: true,
+        correctionsMade: correctionsMade || false,
+        correctionType: correctionType || null,
+        correctionDetails: correctionDetails || null,
+        notes: notes || null,
+        timestamp: new Date().toISOString(),
+      },
     });
+
+    if (correctionsMade) {
+      await logAuditEvent({
+        type: EVENTS.CASEWORKER_CORRECTION,
+        actorType: ACTORS.CASEWORKER,
+        actorId: req.user.id,
+        intakeId: intake.id,
+        countyId: req.user.countyId,
+        ip: req.ip,
+        details: {
+          correctionType,
+          correctionDetails: correctionDetails || null,
+          notes,
+        },
+      });
+    }
 
     res.json({ review, status: "REVIEWED" });
   } catch (error) {

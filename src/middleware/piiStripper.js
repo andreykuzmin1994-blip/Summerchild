@@ -22,26 +22,30 @@ class PIIStripper {
       cleaned = cleaned.replaceAll(realName, placeholder);
     }
 
-    // Replace SSN patterns (in case applicant volunteers one)
-    cleaned = cleaned.replace(/\b\d{3}-?\d{2}-?\d{4}\b/g, "[REDACTED]");
+    // Replace SSN patterns — catches all formats: 123-45-6789, 123 45 6789, 123456789
+    cleaned = cleaned.replace(/\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g, "[REDACTED]");
+    cleaned = cleaned.replace(/\b\d{9}\b/g, "[REDACTED]");
 
-    // Replace phone patterns
+    // Replace phone patterns — catches (404) 555-0123, 404.555.0123, +1-404-555-0123, ext
     cleaned = cleaned.replace(
-      /\b\(?\d{3}\)?[-.)\s]?\d{3}[-.)\s]?\d{4}\b/g,
+      /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?:\s*(?:x|ext\.?|extension)\s*\d+)?/gi,
       "[REDACTED]"
     );
 
-    // Replace street addresses
+    // Replace street addresses — expanded suffix list
     cleaned = cleaned.replace(
-      /\b\d+\s+[A-Z][a-zA-Z]+\s+(St|Ave|Blvd|Dr|Rd|Ln|Way|Ct|Pl|Pkwy)\b\.?/gi,
+      /\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:St(?:reet)?|Ave(?:nue)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Ct|Court|Pl(?:aza)?|Pkwy|Parkway|Ter(?:race)?|Cir(?:cle)?)\b\.?/gi,
       "[REDACTED]"
     );
 
-    // Replace email addresses
+    // Replace email addresses — handles + addressing and subdomains
     cleaned = cleaned.replace(
-      /\b[\w.-]+@[\w.-]+\.\w+\b/g,
+      /\b[\w.+%-]+@[\w.-]+\.\w{2,}\b/g,
       "[REDACTED]"
     );
+
+    // Replace EBT/welfare ID numbers (state-specific patterns)
+    cleaned = cleaned.replace(/\b[A-Z]{2}\d{7,}\b/g, "[REDACTED]");
 
     return cleaned;
   }

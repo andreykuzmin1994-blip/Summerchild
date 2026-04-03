@@ -60,10 +60,19 @@ class AIProvider {
   constructor() {
     this.anthropic = null;
     this.openai = null;
-    this.circuitBreaker = new CircuitBreaker({
-      failureThreshold: parseInt(process.env.AI_FAILOVER_THRESHOLD || "3", 10),
-      resetTimeoutMs: parseInt(process.env.AI_FAILOVER_RESET_MS || "60000", 10),
-    });
+    // Per-provider circuit breakers prevent thrashing between broken providers
+    this.circuitBreakers = {
+      anthropic: new CircuitBreaker({
+        failureThreshold: parseInt(process.env.AI_FAILOVER_THRESHOLD || "3", 10),
+        resetTimeoutMs: parseInt(process.env.AI_FAILOVER_RESET_MS || "60000", 10),
+      }),
+      openai: new CircuitBreaker({
+        failureThreshold: parseInt(process.env.AI_FAILOVER_THRESHOLD || "3", 10),
+        resetTimeoutMs: parseInt(process.env.AI_FAILOVER_RESET_MS || "60000", 10),
+      }),
+    };
+    // Keep backward-compatible single reference for metrics
+    this.circuitBreaker = this.circuitBreakers.anthropic;
     this.activeProvider = "anthropic";
     this.failoverLog = [];
 
@@ -185,14 +194,15 @@ class AIProvider {
 
     return {
       activeProvider: this.activeProvider,
-      circuitBreaker: {
-        state: this.circuitBreaker.state,
-        failureCount: this.circuitBreaker.failureCount,
-        failureThreshold: this.circuitBreaker.failureThreshold,
-        resetTimeoutMs: this.circuitBreaker.resetTimeoutMs,
-        lastFailureTime: this.circuitBreaker.lastFailureTime
-          ? new Date(this.circuitBreaker.lastFailureTime).toISOString()
-          : null,
+      circuitBreakers: {
+        anthropic: {
+          state: this.circuitBreakers.anthropic.state,
+          failureCount: this.circuitBreakers.anthropic.failureCount,
+        },
+        openai: {
+          state: this.circuitBreakers.openai.state,
+          failureCount: this.circuitBreakers.openai.failureCount,
+        },
       },
       failoverStats: {
         total: this.failoverLog.length,
@@ -277,15 +287,15 @@ class AIProvider {
    */
   async sendMessage(systemPrompt, messages, modelTier, sessionHash = null) {
     // Try primary provider (Anthropic) if circuit breaker allows
-    if (this.anthropic && this.circuitBreaker.canAttempt()) {
+    if (this.anthropic && this.circuitBreakers.anthropic.canAttempt()) {
       try {
         const result = await this._sendAnthropic(systemPrompt, messages, modelTier, sessionHash);
-        this.circuitBreaker.recordSuccess();
+        this.circuitBreakers.anthropic.recordSuccess();
         this.activeProvider = "anthropic";
         return result;
       } catch (error) {
         if (this._isFailoverError(error) && this.hasFallback()) {
-          this.circuitBreaker.recordFailure();
+          this.circuitBreakers.anthropic.recordFailure();
           this._logFailover("anthropic", "openai", error);
           // Fall through to fallback
         } else {
@@ -295,16 +305,18 @@ class AIProvider {
       }
     }
 
-    // Fallback to OpenAI
-    if (this.openai) {
+    // Fallback to OpenAI (with its own circuit breaker)
+    if (this.openai && this.circuitBreakers.openai.canAttempt()) {
       try {
         const result = await this._sendOpenAI(systemPrompt, messages, modelTier);
+        this.circuitBreakers.openai.recordSuccess();
         this.activeProvider = "openai";
         return result;
       } catch (fallbackError) {
+        this.circuitBreakers.openai.recordFailure();
         // Both providers failed
         const err = new Error(
-          `All AI providers failed. Primary (Anthropic): circuit breaker ${this.circuitBreaker.state}. ` +
+          `All AI providers failed. Primary (Anthropic): circuit breaker ${this.circuitBreakers.anthropic.state}. ` +
           `Fallback (OpenAI): ${fallbackError.message}`
         );
         err.code = "ALL_PROVIDERS_FAILED";
@@ -312,11 +324,21 @@ class AIProvider {
       }
     }
 
-    // No fallback configured, and primary is unavailable
-    throw new Error(
-      "Primary AI provider (Anthropic) is unavailable and no fallback provider is configured. " +
-      "Set OPENAI_API_KEY in environment to enable failover."
+    // No fallback configured or all circuit breakers open
+    if (!this.openai) {
+      throw new Error(
+        "Primary AI provider (Anthropic) is unavailable and no fallback provider is configured. " +
+        "Set OPENAI_API_KEY in environment to enable failover."
+      );
+    }
+
+    // Both circuit breakers open — graceful degradation
+    const err = new Error(
+      "All AI providers are temporarily unavailable. Both circuit breakers are open. " +
+      `Anthropic: ${this.circuitBreakers.anthropic.state}, OpenAI: ${this.circuitBreakers.openai.state}`
     );
+    err.code = "ALL_PROVIDERS_FAILED";
+    throw err;
   }
 
   /**
@@ -327,9 +349,15 @@ class AIProvider {
       anthropic: { configured: !!this.anthropic, available: false },
       openai: { configured: !!this.openai, available: false },
       activeProvider: this.activeProvider,
-      circuitBreaker: {
-        state: this.circuitBreaker.state,
-        failureCount: this.circuitBreaker.failureCount,
+      circuitBreakers: {
+        anthropic: {
+          state: this.circuitBreakers.anthropic.state,
+          failureCount: this.circuitBreakers.anthropic.failureCount,
+        },
+        openai: {
+          state: this.circuitBreakers.openai.state,
+          failureCount: this.circuitBreakers.openai.failureCount,
+        },
       },
     };
 

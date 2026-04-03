@@ -21,12 +21,30 @@ async function runConsistencyChecks(intake, calculations, fiscalYear = 2026) {
   flags.push(...checkPossibleUnreportedBenefits(intake));
   flags.push(...checkSeasonalIncomePattern(intake));
   flags.push(...checkPossibleStudentInHousehold(intake));
+  flags.push(...checkApplicantIncome(intake));
 
-  const riskScore = deriveRiskScore(flags);
+  // Prioritize flags: deduplicate by type+member, keep highest severity, limit to top 15
+  const flagsByKey = {};
+  for (const flag of flags) {
+    // Use type + member/message as key to allow multiple flags per type for different members/deductions
+    const key = flag.member
+      ? `${flag.type}:${flag.member}`
+      : `${flag.type}:${(flag.message || "").slice(0, 40)}`;
+    if (!flagsByKey[key] || severityRank(flag.severity) < severityRank(flagsByKey[key].severity)) {
+      flagsByKey[key] = flag;
+    }
+  }
+  const dedupedFlags = Object.values(flagsByKey);
+  const prioritizedFlags = dedupedFlags
+    .sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
+    .slice(0, 15);
+
+  const riskScore = deriveRiskScore(prioritizedFlags);
 
   return {
     riskScore,
-    flags,
+    flags: prioritizedFlags,
+    totalFlagsFound: flags.length,
     expedited: calculations.expedited,
     calculations: {
       grossMonthlyIncome: calculations.deductions.grossIncome,
@@ -535,6 +553,37 @@ function checkPossibleStudentInHousehold(intake) {
   return flags;
 }
 
+/**
+ * Check if the applicant (not in householdMembers array) reports no income
+ * for single-person households. This is a gap — the existing household
+ * income check only looks at householdMembers, not the implicit applicant.
+ */
+function checkApplicantIncome(intake) {
+  const flags = [];
+  const members = intake.householdMembers || [];
+  const incomeSources = intake.incomeSources || [];
+
+  // Only for single-person households (no other members)
+  if (members.filter((m) => m.inSnapHousehold).length === 0) {
+    const applicantIncome = incomeSources.filter((s) => !s.householdMemberId);
+    if (applicantIncome.length === 0) {
+      flags.push({
+        type: "APPLICANT_NO_INCOME",
+        severity: "HIGH",
+        field: "income",
+        message: "Single-person household with no reported income — verify employment and benefits status",
+        suggestedAction: "Ask about SSI, SSDI, unemployment, employment, gig work, or any other income",
+      });
+    }
+  }
+
+  return flags;
+}
+
+function severityRank(severity) {
+  return { HIGH: 0, MEDIUM: 1, LOW: 2, INFO: 3 }[severity] ?? 4;
+}
+
 function deriveRiskScore(flags) {
   const hasHigh = flags.some((f) => f.severity === "HIGH");
   const hasMedium = flags.some((f) => f.severity === "MEDIUM");
@@ -560,4 +609,5 @@ module.exports = {
   checkPossibleUnreportedBenefits,
   checkSeasonalIncomePattern,
   checkPossibleStudentInHousehold,
+  checkApplicantIncome,
 };

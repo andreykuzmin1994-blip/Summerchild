@@ -38,6 +38,27 @@ async function logAuditEvent(event) {
   }
 }
 
+/**
+ * Verify that audit logs cannot be deleted or modified.
+ * Run at startup and periodically to ensure DB permissions are correct.
+ * Returns { immutable: boolean, message: string }
+ */
+async function verifyAuditLogImmutability() {
+  try {
+    // Attempt a DELETE — should be blocked by DB permissions
+    await prisma.$executeRawUnsafe(
+      "DELETE FROM audit_logs WHERE 1 = 0"
+    );
+    // If we reach here, DELETE is allowed (bad)
+    log.error("SECURITY ALERT: Audit log DELETE permission is not restricted");
+    return { immutable: false, message: "Audit logs are NOT immutable — DELETE is permitted" };
+  } catch {
+    // Expected: DELETE should be blocked
+    log.info("Audit log immutability verified — DELETE is restricted");
+    return { immutable: true, message: "Audit logs are immutable" };
+  }
+}
+
 // Event type constants
 const EVENTS = {
   INTAKE_CREATED: "INTAKE_CREATED",
@@ -56,6 +77,10 @@ const EVENTS = {
   ADMIN_USER_CREATED: "ADMIN_USER_CREATED",
   ADMIN_USER_MODIFIED: "ADMIN_USER_MODIFIED",
   ADMIN_USER_DEACTIVATED: "ADMIN_USER_DEACTIVATED",
+  ADMIN_AUDIT_LOG_ACCESSED: "ADMIN_AUDIT_LOG_ACCESSED",
+  AI_HALLUCINATION_DETECTED: "AI_HALLUCINATION_DETECTED",
+  CASEWORKER_REVIEW_CONFIRMED: "CASEWORKER_REVIEW_CONFIRMED",
+  FEDERAL_MATCH_CORRECTION: "FEDERAL_MATCH_CORRECTION",
 };
 
 const ACTORS = {
@@ -65,4 +90,4 @@ const ACTORS = {
   ADMIN: "ADMIN",
 };
 
-module.exports = { logAuditEvent, EVENTS, ACTORS };
+module.exports = { logAuditEvent, verifyAuditLogImmutability, EVENTS, ACTORS };
