@@ -33,6 +33,7 @@ function normalizeUnicode(text) {
  * bypass pattern-matching filters.
  * Returns { detected: boolean, encoding?: string }
  */
+// eslint-disable-next-line no-unused-vars
 function detectEncodedPayload(text) {
   // Base64 detection: look for long base64-encoded strings
   const base64Pattern = /[A-Za-z0-9+/]{40,}={0,2}/;

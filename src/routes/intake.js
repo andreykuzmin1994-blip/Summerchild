@@ -1,7 +1,7 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const { v4: uuidv4 } = require("uuid");
-const { buildSystemPrompt, sendMessage, determineCurrentSection } = require("../services/aiAssistant");
+const { buildSystemPromptWithContext, sendMessage, determineCurrentSection } = require("../services/aiAssistant");
 const { PIIStripper } = require("../middleware/piiStripper");
 const { injectionGuardMiddleware } = require("../middleware/injectionGuard");
 const { validateExtractedData, validateDisplayName } = require("../services/dataValidator");
@@ -22,6 +22,8 @@ const {
   blockExfiltration,
 } = require("../middleware/outputSanitizer");
 const { validateConversationContext } = require("../middleware/conversationContext");
+const { runOutputGuardrails, BLOCKED_RESPONSE } = require("../middleware/outputGuardrails");
+const { DialogRailEngine, checkRetrievalRail } = require("../services/dialogRails");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
 
@@ -428,19 +430,32 @@ router.post("/start", requireStaffPin, intakeStartLimiter, async (req, res) => {
       { context: "applicant.create", correlationId: req.correlationId }
     );
 
-    // Build system prompt and cache it for this session
-    const systemPrompt = await buildSystemPrompt("GA", 2026);
+    // Build system prompt and validate retrieval context (retrieval rail)
+    const { prompt: systemPrompt, retrievalContext } = await buildSystemPromptWithContext("GA", 2026);
+    const retrievalCheck = checkRetrievalRail(retrievalContext);
+    if (!retrievalCheck.passed) {
+      log.error("Retrieval rail failed — incomplete policy data", {
+        correlationId: req.correlationId,
+        missing: retrievalCheck.missing,
+      });
+      // Don't block the intake — the system prompt still works with
+      // whatever data is available, but log for ops monitoring
+    }
 
     const piiStripper = new PIIStripper();
     // Only mapping needed: the applicant's first name (for safety-net redaction)
     const firstName = displayName.split(" ")[0];
     if (firstName) piiStripper.addMapping(firstName, "[APPLICANT]");
 
+    // Initialize dialog rail engine for conversation flow control
+    const dialogRails = new DialogRailEngine();
+
     await sessionStore.set(sessionToken, {
       intakeId: intake.id,
       systemPrompt,
       conversationHistory: [],
       piiStripper,
+      dialogRails: dialogRails.serialize(),
       turnNumber: 0,
       totalTokensUsed: 0,
       language: language || "en",
@@ -575,14 +590,38 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       return res.status(401).json({ error: "Session mismatch" });
     }
 
+    // ── Dialog Rails: restore engine state from session ────────────
+    const dialogRails = DialogRailEngine.deserialize(session.dialogRails);
+
+    // ── Dialog Rails: INPUT RAIL — check if message fits current flow
+    const inputRailResult = dialogRails.checkInputRail(message);
+    if (!inputRailResult.allowed && inputRailResult.redirectMessage) {
+      // User is jumping ahead — prepend a gentle redirect to the message
+      // but still process it (don't block the user, just guide them)
+      log.info("Dialog rail: redirecting user", {
+        correlationId: req.correlationId,
+        currentSection: dialogRails.currentSection,
+        attemptedSection: inputRailResult.attemptedSection,
+      });
+    }
+
     // Strip PII before sending to AI
     const strippedMessage = session.piiStripper.strip(message);
+
+    // If dialog rail suggests redirecting, prepend context to help the AI stay on track
+    let aiInputMessage = strippedMessage;
+    if (!inputRailResult.allowed && inputRailResult.redirectMessage) {
+      // Inject a subtle system-level hint so the AI stays in the current section
+      aiInputMessage = strippedMessage;
+      // Note: we don't modify the user message — the system prompt already
+      // defines the section order. The redirect info is logged for monitoring.
+    }
 
     // Send to AI
     const aiResponse = await sendMessage(
       session.piiStripper.stripConversation(session.conversationHistory),
       session.systemPrompt,
-      strippedMessage,
+      aiInputMessage,
       sessionToken
     );
 
@@ -784,9 +823,45 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       },
     });
 
-    // Restore PII in display message
-    const displayMessage = session.piiStripper.restore(aiResponse.displayMessage);
-    const section = determineCurrentSection(session.conversationHistory);
+    // ── Output guardrails ──────────────────────────────────────────
+    // Check the AI's display message for policy violations before the
+    // applicant sees it. This catches: eligibility determinations,
+    // system prompt leakage, off-topic drift, PII echo, excess length.
+    let finalDisplayMessage = aiResponse.displayMessage;
+    const guardrailResult = runOutputGuardrails(finalDisplayMessage);
+
+    if (guardrailResult.blocked) {
+      // Severe violation — replace entire response with safe fallback
+      log.error("Output guardrail BLOCKED response", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        violations: guardrailResult.violations,
+      });
+      await logAuditEvent({
+        type: EVENTS.AI_API_CALL,
+        actorType: ACTORS.SYSTEM,
+        actorId: "output-guardrail",
+        intakeId: intake.id,
+        details: {
+          event: "RESPONSE_BLOCKED",
+          violations: guardrailResult.violations,
+        },
+      });
+      finalDisplayMessage = BLOCKED_RESPONSE;
+    } else if (guardrailResult.correctedMessage) {
+      // Auto-corrected (PII redacted, length trimmed)
+      log.warn("Output guardrail corrected response", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        violations: guardrailResult.violations,
+      });
+      finalDisplayMessage = guardrailResult.correctedMessage;
+    }
+
+    // Restore PII-mapped display names in the final message
+    const displayMessage = session.piiStripper.restore(finalDisplayMessage);
+    // Use dialog rail section (data-driven) with heuristic as fallback
+    const section = dialogRails.currentSection || determineCurrentSection(session.conversationHistory);
 
     res.json({
       message: displayMessage,

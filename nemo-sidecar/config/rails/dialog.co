@@ -1,0 +1,86 @@
+# Dialog Rails — Colang 2.0 flow definitions for SNAP intake sections
+# Mirrors the DialogRailEngine section definitions in dialogRails.js
+
+import core
+
+# ── Section Flows ────────────────────────────────────────────────────
+
+define user start intake
+  "I want to apply for SNAP"
+  "I need food stamps"
+  "I'm here for benefits"
+  "hello"
+  "hi"
+
+define user provide household info
+  "I live with"
+  "my spouse"
+  "my children"
+  "household"
+  "family"
+  "people in my home"
+  "we eat together"
+  "we cook together"
+
+define user provide income info
+  "I earn"
+  "my income is"
+  "I get paid"
+  "I work at"
+  "self employed"
+  "social security"
+  "disability"
+  "unemployment"
+
+define user provide expense info
+  "my rent is"
+  "I pay for"
+  "utilities"
+  "daycare"
+  "medical expenses"
+  "child support"
+  "mortgage"
+
+define user confirm review
+  "yes that's correct"
+  "looks good"
+  "that's right"
+  "no changes"
+  "submit"
+
+# ── Main Intake Flow ────────────────────────────────────────────────
+
+define flow main
+  user start intake
+  bot greet and explain
+  # Household section
+  bot ask household composition
+  user provide household info
+  # Income section
+  bot ask income sources
+  user provide income info
+  # Expenses section
+  bot ask expenses
+  user provide expense info
+  # Review section
+  bot summarize for review
+  user confirm review
+  bot complete intake
+
+define bot greet and explain
+  "Welcome! I'm going to help collect information for your SNAP application. The caseworker will collect your personal details like name and SSN separately — I only need household and financial information. Let's start with your household."
+
+define bot ask household composition
+  "How many people live in your household, and do you all purchase and prepare food together?"
+
+define bot ask income sources
+  "Now let's talk about income. Does anyone in your household have a job or receive any income?"
+
+define bot ask expenses
+  "Let's go over your expenses. What is your monthly rent or mortgage payment?"
+
+define bot summarize for review
+  "Let me summarize what you've shared so I can make sure everything is correct."
+
+define bot complete intake
+  "Thank you! Your information has been submitted. The caseworker will call your queue number shortly."

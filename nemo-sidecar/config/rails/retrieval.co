@@ -1,0 +1,12 @@
+# Retrieval Rails — validate context data before it enters the LLM prompt
+# In Cushion Gov, "retrieval" = pulling SNAP policy data from PostgreSQL
+
+define flow check context freshness
+  # Ensure the system prompt was built with current fiscal year data
+  # and all required household sizes (1-8) are present
+  $context_valid = execute check_snap_context_completeness
+  if not $context_valid
+    bot warn about incomplete context
+
+define bot warn about incomplete context
+  "I may not have the most up-to-date policy information. The caseworker will verify all calculations."

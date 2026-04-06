@@ -1,0 +1,182 @@
+[
+  {
+    "id": "gross_income_limit_hh3",
+    "question": "What is the gross income limit for a household of 3 in Georgia?",
+    "expectedAnswer": "The gross income limit for a household of 3 is $2,764 per month, which is 130% of the Federal Poverty Level.",
+    "context": "Income Limits by Household Size: HH3: Gross ≤ $2,764",
+    "cfrCitation": "7 CFR § 273.9(a)",
+    "category": "income_limits",
+    "difficulty": "easy"
+  },
+  {
+    "id": "net_income_limit_hh4",
+    "question": "What is the net income limit for a family of 4 on SNAP?",
+    "expectedAnswer": "The net income limit for a household of 4 is $2,563 per month, which is 100% of the Federal Poverty Level.",
+    "context": "Income Limits by Household Size: HH4: Net income limit ≤ $2,563 per month, 100% of Federal Poverty Level for household of 4",
+    "cfrCitation": "7 CFR § 273.9(a)",
+    "category": "income_limits",
+    "difficulty": "easy"
+  },
+  {
+    "id": "standard_deduction_hh5",
+    "question": "How much is the standard deduction for a household of 5?",
+    "expectedAnswer": "The standard deduction for a household of 5 is $261 per month.",
+    "context": "Income Limits by Household Size: HH5: Std deduction $261",
+    "cfrCitation": "7 CFR § 273.9(d)(2)",
+    "category": "deductions",
+    "difficulty": "easy"
+  },
+  {
+    "id": "earned_income_deduction",
+    "question": "How does the earned income deduction work?",
+    "expectedAnswer": "The earned income deduction is 20% of all earned income (wages, salary, tips, self-employment net income). It applies only to earned income, not unearned income like Social Security or disability benefits.",
+    "context": "20% earned income deduction: applies only to earned income [§ 273.9(d)(1)]",
+    "cfrCitation": "7 CFR § 273.9(d)(1)",
+    "category": "deductions",
+    "difficulty": "medium"
+  },
+  {
+    "id": "shelter_excess_cap",
+    "question": "Is there a cap on the shelter excess deduction?",
+    "expectedAnswer": "Yes, the shelter excess deduction is capped at $744 per month unless the household includes an elderly (60+) or disabled member, in which case there is no cap.",
+    "context": "Shelter excess: total shelter - 50% of income after other deductions (capped at $744 unless elderly/disabled in household) [§ 273.9(d)(5)]",
+    "cfrCitation": "7 CFR § 273.9(d)(5)",
+    "category": "deductions",
+    "difficulty": "medium"
+  },
+  {
+    "id": "medical_deduction_threshold",
+    "question": "Can I deduct medical expenses on SNAP?",
+    "expectedAnswer": "Medical expense deductions are only available to households with an elderly (60+) or disabled member. Only the amount over $35 per month is deductible, or you can use the $161 standard medical deduction if your expenses exceed $35 — whichever is greater.",
+    "context": "Medical expenses for elderly/disabled: amount over $35/month, or $161 standard if > $35 [§ 273.9(d)(6)]",
+    "cfrCitation": "7 CFR § 273.9(d)(6)",
+    "category": "deductions",
+    "difficulty": "medium"
+  },
+  {
+    "id": "self_employment_income",
+    "question": "How is self-employment income counted for SNAP?",
+    "expectedAnswer": "Self-employment income is calculated as gross receipts minus either actual business expenses or a 40% standard deduction — whichever produces lower countable income (more favorable to the applicant).",
+    "context": "Self-employment: count gross receipts minus either actual business expenses OR 40% standard deduction (whichever is lower) [§ 273.11(a)]",
+    "cfrCitation": "7 CFR § 273.11(a)",
+    "category": "income",
+    "difficulty": "medium"
+  },
+  {
+    "id": "expedited_criteria",
+    "question": "What qualifies someone for expedited SNAP processing?",
+    "expectedAnswer": "A household qualifies for expedited (7-day) processing if: (1) gross monthly income is less than $150 AND liquid resources are less than $100, OR (2) combined income plus resources are less than monthly rent plus utilities.",
+    "context": "Expedited Criteria: Gross income < $150 AND liquid resources < $100 [§ 273.2(i)(1)], OR combined income + resources < monthly rent + utilities",
+    "cfrCitation": "7 CFR § 273.2(i)(1)",
+    "category": "expedited",
+    "difficulty": "medium"
+  },
+  {
+    "id": "bbce_georgia",
+    "question": "Does Georgia use Broad-Based Categorical Eligibility?",
+    "expectedAnswer": "Yes, Georgia uses BBCE (Broad-Based Categorical Eligibility), which means there is no asset test for SNAP eligibility in Georgia.",
+    "context": "State Configuration: BBCE: Yes [7 CFR § 273.2(j)(2)], Asset Test: None (BBCE state)",
+    "cfrCitation": "7 CFR § 273.2(j)(2)",
+    "category": "state_config",
+    "difficulty": "easy"
+  },
+  {
+    "id": "household_composition",
+    "question": "Who counts as part of a SNAP household?",
+    "expectedAnswer": "A SNAP household includes people who purchase and prepare food together. Spouses and children under 22 living together are always in the same SNAP household regardless of whether they purchase and prepare food together.",
+    "context": "SNAP household = people who purchase and prepare food together [§ 273.1(a)]. Spouses and children under 22 are always in the same SNAP household [§ 273.1(b)(1)]",
+    "cfrCitation": "7 CFR § 273.1",
+    "category": "household",
+    "difficulty": "medium"
+  },
+  {
+    "id": "elderly_definition",
+    "question": "What age qualifies as elderly for SNAP?",
+    "expectedAnswer": "A person age 60 or older is considered elderly for SNAP purposes.",
+    "context": "Elderly = age 60 or older [7 CFR § 271.2]",
+    "cfrCitation": "7 CFR § 271.2",
+    "category": "definitions",
+    "difficulty": "easy"
+  },
+  {
+    "id": "disabled_definition",
+    "question": "Who qualifies as disabled for SNAP purposes?",
+    "expectedAnswer": "A person receiving SSI, SSDI, or VA disability benefits is considered disabled for SNAP purposes.",
+    "context": "Disabled = receiving SSI, SSDI, or VA disability benefits [7 CFR § 271.2]",
+    "cfrCitation": "7 CFR § 271.2",
+    "category": "definitions",
+    "difficulty": "easy"
+  },
+  {
+    "id": "income_conversion_weekly",
+    "question": "How do you convert weekly income to monthly for SNAP?",
+    "expectedAnswer": "Weekly income is converted to monthly by multiplying by 4.333.",
+    "context": "SNAP monthly conversion: weekly × 4.333 [§ 273.10(c)]",
+    "cfrCitation": "7 CFR § 273.10(c)",
+    "category": "income",
+    "difficulty": "easy"
+  },
+  {
+    "id": "sua_heating_cooling",
+    "question": "What is the Standard Utility Allowance for heating and cooling in Georgia?",
+    "expectedAnswer": "The Standard Utility Allowance for heating/cooling in Georgia for FY2026 is $414 per month.",
+    "context": "Standard Utility Allowances (Georgia FY2026): Heating/Cooling: $414",
+    "cfrCitation": "7 CFR § 273.9(d)(5)(iii)",
+    "category": "utilities",
+    "difficulty": "easy"
+  },
+  {
+    "id": "child_support_deduction",
+    "question": "Can I deduct child support payments from my SNAP income?",
+    "expectedAnswer": "Yes, legally owed child support that is paid out by a household member is deductible from income for SNAP calculations.",
+    "context": "Legally owed child support paid out [§ 273.9(d)(4)]",
+    "cfrCitation": "7 CFR § 273.9(d)(4)",
+    "category": "deductions",
+    "difficulty": "easy"
+  },
+  {
+    "id": "benefit_calculation_method",
+    "question": "How is the SNAP benefit amount calculated?",
+    "expectedAnswer": "The SNAP benefit is calculated as: maximum allotment for the household size minus 30% of net income (rounded up). Households of 1-2 members receive at least the $24 minimum benefit if eligible.",
+    "context": "benefit = maxAllotment - ceil(netIncome × 0.30). Minimum benefit of $24 for 1-2 person households.",
+    "cfrCitation": "7 CFR § 273.10(e)",
+    "category": "benefits",
+    "difficulty": "medium"
+  },
+  {
+    "id": "dependent_care_deduction",
+    "question": "How does the dependent care deduction work for SNAP?",
+    "expectedAnswer": "The actual amount of dependent care expenses is deductible, but only if the care is tied to work or training.",
+    "context": "Dependent care: actual amount, only if tied to work or training [§ 273.9(d)(3)]",
+    "cfrCitation": "7 CFR § 273.9(d)(3)",
+    "category": "deductions",
+    "difficulty": "medium"
+  },
+  {
+    "id": "shelter_excess_calculation",
+    "question": "How is the shelter excess deduction calculated?",
+    "expectedAnswer": "The shelter excess deduction equals total shelter costs minus 50% of income after all other deductions have been applied. This is capped at $744 unless there is an elderly or disabled member in the household.",
+    "context": "Shelter excess: total shelter - 50% of income after other deductions (capped at $744 unless elderly/disabled in household) [§ 273.9(d)(5)]",
+    "cfrCitation": "7 CFR § 273.9(d)(5)",
+    "category": "deductions",
+    "difficulty": "hard"
+  },
+  {
+    "id": "max_allotment_hh1",
+    "question": "What is the maximum SNAP benefit for a single person in Georgia?",
+    "expectedAnswer": "The maximum SNAP allotment for a household of 1 in Georgia for FY2026 is $292 per month.",
+    "context": "Income Limits by Household Size: HH1: Maximum SNAP allotment $292 per month for single person household in Georgia FY2026",
+    "cfrCitation": "7 CFR § 273.10(e)",
+    "category": "benefits",
+    "difficulty": "easy"
+  },
+  {
+    "id": "gross_vs_net_income_test",
+    "question": "What is the difference between the gross and net income test for SNAP?",
+    "expectedAnswer": "The gross income test checks if total household income before deductions is at or below 130% of the Federal Poverty Level. The net income test checks if income after all deductions is at or below 100% of the Federal Poverty Level. Households with elderly or disabled members are exempt from the gross income test but must still pass the net income test.",
+    "context": "Gross Income Test: 130% of Federal Poverty Level [7 CFR § 273.9(a)]. Net income: 100% FPL. Elderly/disabled households skip gross income test.",
+    "cfrCitation": "7 CFR § 273.9(a)",
+    "category": "income_limits",
+    "difficulty": "hard"
+  }
+]
