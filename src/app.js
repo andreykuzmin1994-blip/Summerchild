@@ -87,8 +87,8 @@ app.get("/api/health", async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     health.checks.database = { status: "ok" };
-  } catch (err) {
-    health.checks.database = { status: "error", message: err.message };
+  } catch {
+    health.checks.database = { status: "error", message: "Database connection failed" };
     health.status = "degraded";
   }
 
@@ -112,7 +112,23 @@ app.get("/api/health", async (req, res) => {
 });
 
 // AI provider health check (shows active provider, circuit breaker state, failover log, metrics)
+// Protected: exposes operational details (provider keys status, failover history)
 app.get("/api/health/ai", async (req, res) => {
+  // Inline auth check — only supervisors/admins should see AI provider internals
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const jwt = require("jsonwebtoken");
+  try {
+    const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+    if (!["SUPERVISOR", "ADMIN"].includes(decoded.role)) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+
   const { aiProvider } = require("./services/aiProvider");
   const status = await aiProvider.healthCheck();
   status.recentFailovers = aiProvider.getFailoverLog();

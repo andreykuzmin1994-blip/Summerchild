@@ -10,10 +10,16 @@ const prisma = new PrismaClient();
 const router = express.Router();
 
 function validatePasswordComplexity(password) {
-  if (!password || password.length < 8) return "Password must be at least 8 characters";
+  if (!password || password.length < 12) return "Password must be at least 12 characters";
+  if (password.length > 128) return "Password must not exceed 128 characters";
   if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter";
   if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter";
   if (!/[0-9]/.test(password)) return "Password must contain at least one digit";
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/.test(password)) return "Password must contain at least one special character";
+  // Block common weak passwords
+  const lower = password.toLowerCase();
+  const weak = ["password1234", "admin1234567", "changeme1234", "qwerty123456"];
+  if (weak.some((w) => lower.includes(w))) return "Password is too common — please choose a stronger one";
   return null;
 }
 
