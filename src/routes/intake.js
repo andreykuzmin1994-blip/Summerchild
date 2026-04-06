@@ -9,6 +9,7 @@ const { validateAIResponse } = require("../services/aiResponseValidator");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { runConsistencyChecks } = require("../services/consistencyChecker");
+const { calculatePredictiveScore, formatRiskSummary } = require("../services/errorPredictor");
 const { aiMessageLimiter, intakeStartLimiter } = require("../middleware/rateLimiter");
 const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
@@ -925,10 +926,24 @@ router.get("/:id/summary", aiMessageLimiter, async (req, res) => {
     // Run consistency checks
     const consistency = await runConsistencyChecks(intake, eligibility);
 
+    // Run Accuracy Assistant predictive scoring preview
+    intake.consistencyFlags = consistency.flags;
+    const stateCode = intake.county?.stateCode || "GA";
+    const prediction = await calculatePredictiveScore(intake, eligibility, stateCode);
+    const riskSummary = formatRiskSummary(prediction);
+
     res.json({
       intake,
       eligibility,
       consistency,
+      accuracyAssistant: {
+        predictiveScore: prediction.predictiveScore,
+        riskLevel: prediction.riskLevel,
+        requiresReview: prediction.requiresReview,
+        riskSummary,
+        factors: prediction.factors,
+        historicalPatterns: prediction.historicalPatterns,
+      },
     });
   } catch (error) {
     log.error("Failed to generate summary", {
@@ -991,9 +1006,26 @@ router.post("/:id/complete", async (req, res) => {
       });
     }
 
-    // Run calculations
+    // Run calculations and consistency checks
     const eligibility = await calculateFullEligibility(intake);
     const consistency = await runConsistencyChecks(intake, eligibility);
+
+    // Attach consistency flags to intake for predictive scoring access
+    intake.consistencyFlags = consistency.flags;
+
+    // Run Accuracy Assistant predictive error detection
+    const county = await prisma.county.findUnique({ where: { id: intake.countyId } });
+    const stateCode = county?.stateCode || "GA";
+    const prediction = await calculatePredictiveScore(intake, eligibility, stateCode);
+    const riskSummary = formatRiskSummary(prediction);
+
+    // Use the higher of rule-based and predictive risk scores
+    const finalRiskScore =
+      prediction.riskLevel === "HIGH" || consistency.riskScore === "HIGH"
+        ? "HIGH"
+        : prediction.riskLevel === "MEDIUM" || consistency.riskScore === "MEDIUM"
+          ? "MEDIUM"
+          : "LOW";
 
     // Update intake with results
     await withRetry(
@@ -1001,7 +1033,10 @@ router.post("/:id/complete", async (req, res) => {
         where: { id },
         data: {
           status: "COMPLETED",
-          riskScore: consistency.riskScore,
+          riskScore: finalRiskScore,
+          predictiveScore: prediction.predictiveScore,
+          riskFactors: prediction.factors,
+          requiresReview: prediction.requiresReview,
           expeditedFlag: eligibility.expedited.eligible,
           expeditedReason: eligibility.expedited.reasons?.join("; ") || null,
           consistencyFlags: consistency.flags,
@@ -1043,14 +1078,19 @@ router.post("/:id/complete", async (req, res) => {
     log.info("Intake completed", {
       correlationId: req.correlationId,
       intakeId: id,
-      riskScore: consistency.riskScore,
+      riskScore: finalRiskScore,
+      predictiveScore: prediction.predictiveScore,
+      requiresReview: prediction.requiresReview,
       expedited: eligibility.expedited.eligible,
       flagCount: consistency.flags.length,
     });
 
     res.json({
       status: "COMPLETED",
-      riskScore: consistency.riskScore,
+      riskScore: finalRiskScore,
+      predictiveScore: prediction.predictiveScore,
+      riskSummary,
+      requiresReview: prediction.requiresReview,
       expedited: eligibility.expedited,
       flagCount: consistency.flags.length,
       estimatedBenefit: eligibility.benefitEstimate.estimatedBenefit,

@@ -5,6 +5,7 @@ const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { eligibilityCache, statsCache } = require("../services/queryCache");
+const { refreshErrorPatterns, getAccuracyStats } = require("../services/errorPredictor");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -82,21 +83,33 @@ router.post("/login", authLimiter, async (req, res) => {
  */
 router.get("/dashboard", requireVerifiedAuth, async (req, res) => {
   try {
-    const { riskScore, status } = req.query;
+    const { riskScore, status, requiresReview } = req.query;
     const where = {
       countyId: req.user.countyId,
       status: status || "COMPLETED",
     };
     if (riskScore) where.riskScore = riskScore;
+    if (requiresReview === "true") where.requiresReview = true;
 
     const intakes = await prisma.intake.findMany({
       where,
-      include: {
+      select: {
+        id: true,
+        status: true,
+        queueNumber: true,
+        riskScore: true,
+        predictiveScore: true,
+        requiresReview: true,
+        expeditedFlag: true,
+        createdAt: true,
+        updatedAt: true,
         applicant: { select: { displayName: true } },
         _count: { select: { householdMembers: true } },
       },
       orderBy: [
-        { expeditedFlag: "desc" }, // Expedited cases first
+        { expeditedFlag: "desc" },      // Expedited cases first
+        { requiresReview: "desc" },      // Then cases needing review
+        { predictiveScore: "desc" },     // Then by predictive risk (highest first)
         { createdAt: "desc" },
       ],
     });
@@ -135,12 +148,18 @@ router.get("/dashboard", requireVerifiedAuth, async (req, res) => {
         ? `${(flaggedCompleted / totalCompleted * 100).toFixed(1)}%`
         : "0%";
 
+      // Accuracy Assistant stats
+      const requiresReviewCount = await prisma.intake.count({
+        where: { countyId, requiresReview: true, status: { in: ["COMPLETED"] } },
+      });
+
       return {
         intakesToday: todayCount,
         intakesThisWeek: weekCount,
         flaggedIntakes: flaggedCount,
         avgCompletionTimeMinutes: avgCompletionTime,
         flagRate,
+        requiresReviewCount,
       };
     });
 
@@ -503,6 +522,142 @@ router.delete("/users/:id", requireVerifiedAuth, requireRole("ADMIN"), async (re
   } catch (error) {
     console.error("[DEACTIVATE USER]", error);
     res.status(500).json({ error: "Failed to deactivate user" });
+  }
+});
+
+// ─── Accuracy Assistant Endpoints ─────────────────────────────────
+
+/**
+ * GET /api/caseworker/accuracy/stats
+ * Accuracy statistics for the caseworker's county.
+ */
+router.get("/accuracy/stats", requireAuth, async (req, res) => {
+  try {
+    const stats = await getAccuracyStats(req.user.countyId);
+    res.json(stats);
+  } catch (error) {
+    console.error("[ACCURACY STATS]", error);
+    res.status(500).json({ error: "Failed to load accuracy stats" });
+  }
+});
+
+/**
+ * GET /api/caseworker/accuracy/patterns
+ * View cached error patterns for the caseworker's state.
+ */
+router.get("/accuracy/patterns", requireAuth, async (req, res) => {
+  try {
+    const county = await prisma.county.findUnique({
+      where: { id: req.user.countyId },
+    });
+    if (!county) {
+      return res.status(404).json({ error: "County not found" });
+    }
+
+    const patterns = await prisma.errorPattern.findMany({
+      where: { stateCode: county.stateCode },
+      orderBy: [{ errorRate: "desc" }],
+    });
+
+    res.json({ stateCode: county.stateCode, patterns });
+  } catch (error) {
+    console.error("[ACCURACY PATTERNS]", error);
+    res.status(500).json({ error: "Failed to load error patterns" });
+  }
+});
+
+/**
+ * POST /api/caseworker/accuracy/refresh-patterns
+ * Refresh error patterns from historical data (supervisor/admin only).
+ */
+router.post(
+  "/accuracy/refresh-patterns",
+  requireAuth,
+  requireRole("ADMIN", "SUPERVISOR"),
+  async (req, res) => {
+    try {
+      const county = await prisma.county.findUnique({
+        where: { id: req.user.countyId },
+      });
+      if (!county) {
+        return res.status(404).json({ error: "County not found" });
+      }
+
+      const patterns = await refreshErrorPatterns(county.stateCode);
+
+      await logAuditEvent({
+        type: "ACCURACY_PATTERNS_REFRESHED",
+        actorType: ACTORS.CASEWORKER,
+        actorId: req.user.id,
+        countyId: req.user.countyId,
+        ip: req.ip,
+        details: { stateCode: county.stateCode, patternsGenerated: patterns.length },
+      });
+
+      res.json({
+        message: "Error patterns refreshed",
+        stateCode: county.stateCode,
+        patternsGenerated: patterns.length,
+        patterns,
+      });
+    } catch (error) {
+      console.error("[REFRESH PATTERNS]", error);
+      res.status(500).json({ error: "Failed to refresh error patterns" });
+    }
+  }
+);
+
+/**
+ * GET /api/caseworker/accuracy/review-queue
+ * Cases flagged by Accuracy Assistant for mandatory review.
+ * Prioritized by predictive score (highest risk first).
+ */
+router.get("/accuracy/review-queue", requireAuth, async (req, res) => {
+  try {
+    const intakes = await prisma.intake.findMany({
+      where: {
+        countyId: req.user.countyId,
+        requiresReview: true,
+        status: "COMPLETED",
+      },
+      select: {
+        id: true,
+        queueNumber: true,
+        riskScore: true,
+        predictiveScore: true,
+        riskFactors: true,
+        expeditedFlag: true,
+        createdAt: true,
+        applicant: { select: { displayName: true } },
+        _count: { select: { householdMembers: true } },
+      },
+      orderBy: [
+        { expeditedFlag: "desc" },
+        { predictiveScore: "desc" },
+      ],
+    });
+
+    // Attach human-readable summaries
+    const enriched = intakes.map((intake) => ({
+      ...intake,
+      riskSummary: intake.predictiveScore >= 70
+        ? `High error risk (${intake.predictiveScore}/100) — mandatory review`
+        : `Moderate error risk (${intake.predictiveScore}/100) — review recommended`,
+      topRiskFactors: Array.isArray(intake.riskFactors)
+        ? intake.riskFactors
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3)
+            .map((f) => f.detail || f.description)
+        : [],
+    }));
+
+    res.json({
+      count: enriched.length,
+      intakes: enriched,
+    });
+  } catch (error) {
+    console.error("[REVIEW QUEUE]", error);
+    res.status(500).json({ error: "Failed to load review queue" });
   }
 });
 
