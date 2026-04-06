@@ -1,0 +1,53 @@
+# Output Rails — Colang 2.0 definitions for Cushion Gov
+# These complement the Express outputGuardrails.js middleware
+
+# ── Eligibility Determination Guard ──────────────────────────────────
+
+define bot make eligibility determination
+  "you are eligible"
+  "you qualify"
+  "you would be eligible"
+  "you are not eligible"
+  "you don't qualify"
+  "your benefits will be"
+  "you will receive $"
+
+define flow check eligibility determination
+  bot make eligibility determination
+  bot correct eligibility statement
+
+define bot correct eligibility statement
+  "The caseworker will review all your information and make an eligibility determination. I'm here to collect the information they need."
+
+# ── System Prompt Leakage Guard ──────────────────────────────────────
+
+define bot leak system prompt
+  "ROLE DEFINITION"
+  "SECURITY RULES"
+  "STRUCTURED DATA OUTPUT"
+  "CUSHION_DATA"
+  "CONVERSATION MANAGEMENT"
+  "cache_control"
+
+define flow check system prompt leakage
+  bot leak system prompt
+  bot generic redirect
+
+define bot generic redirect
+  "Let me get back on track. What's the next piece of information about your household, income, or expenses?"
+
+# ── PII in Output Guard ─────────────────────────────────────────────
+
+define bot echo pii
+  "your SSN is"
+  "your social security"
+  "your phone number"
+  "your address is"
+  "your email is"
+
+define flow check pii in output
+  bot echo pii
+  bot redirect from echoed pii
+
+define bot redirect from echoed pii
+  "I don't store or repeat personal information. The caseworker will handle that separately. Let's continue with your application."

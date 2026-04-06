@@ -1,0 +1,38 @@
+# NeMo Guardrails Configuration for Cushion Gov SNAP Intake
+#
+# This runs as an optional sidecar alongside the Express app.
+# The Express app can call this via POST http://localhost:8090/v1/chat/completions
+#
+# To enable: set NEMO_GUARDRAILS_URL=http://localhost:8090 in .env
+
+models:
+  - type: main
+    engine: openai
+    model: claude-haiku-4-5-20251001
+    parameters:
+      # Routed through the Express app's AI SDK provider, not called directly
+      # The NeMo server acts as a guardrail filter, not a model caller
+      pass_through: true
+
+rails:
+  input:
+    flows:
+      - check jailbreak
+      - check pii in input
+      - check topic relevance
+
+  output:
+    flows:
+      - check eligibility determination
+      - check system prompt leakage
+      - check pii in output
+
+  retrieval:
+    flows:
+      - check context freshness
+
+  config:
+    # Run input and output rails in parallel for lower latency
+    enable_parallel_rails: true
+    # Timeout for each rail (ms)
+    rail_timeout: 2000
