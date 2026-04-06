@@ -34,7 +34,7 @@ const HISTORY_WINDOW_DAYS = 180;
 const RISK_FACTORS = [
   {
     name: "self_employment_income",
-    description: "Self-employment income is the #1 source of SNAP overpayment errors (USDA QC)",
+    description: "Self-employment income is classified by FNS as a 'harder case' requiring more review time (CBPP/FNS)",
     baseWeight: 15,
     evaluate(intake) {
       const selfEmp = (intake.incomeSources || []).filter(
@@ -68,7 +68,7 @@ const RISK_FACTORS = [
 
   {
     name: "pay_frequency_risk",
-    description: "Pay frequency misreporting accounts for ~8-10% of overpayment errors",
+    description: "Pay frequency misreporting is a known source of income calculation errors",
     baseWeight: 12,
     evaluate(intake) {
       const monthlyEmployment = (intake.incomeSources || []).filter(
@@ -90,7 +90,7 @@ const RISK_FACTORS = [
 
   {
     name: "multiple_adults_no_income",
-    description: "Multiple working-age adults with no income is the strongest predictor of unreported income",
+    description: "Multiple working-age adults with no income strongly suggests unreported income",
     baseWeight: 18,
     evaluate(intake) {
       const members = intake.householdMembers || [];
@@ -122,7 +122,7 @@ const RISK_FACTORS = [
 
   {
     name: "zero_income_with_shelter",
-    description: "$0 income with rent payments strongly indicates unreported income",
+    description: "$0 income with rent payments is a strong signal of unreported income",
     baseWeight: 16,
     evaluate(intake, calculations) {
       const grossIncome = calculations?.deductions?.grossIncome ?? null;
@@ -262,16 +262,36 @@ const RISK_FACTORS = [
   },
 
   // ─── New Risk Flags (Phase 2) ───────────────────────────────────────
-  // Based on USDA FNS QC error analysis: earned income errors are 30-35%
-  // of all overpayment dollars, household composition ~12-15%, deductions ~10-14%.
+  //
+  // Source verification status (as of April 2026):
+  //
+  // VERIFIED from USDA FNS / CBPP / GAO:
+  //   - National SNAP overpayment rate: 9.26% (FY2024), 10.03% (FY2023)
+  //   - ~2/3 of overpayments are agency error, ~90% of underpayments are agency error (CBPP)
+  //   - Self-employment income is explicitly called out by FNS as a "harder case"
+  //     requiring more review time (CBPP citing FNS)
+  //   - 44 states required corrective action plans for FY2024 (FNS)
+  //   - State error rates range from 3.28% (SD) to 24.66% (AK) in FY2024
+  //
+  // ESTIMATED (reasonable inference from QC structure, not exact FNS table data):
+  //   - Earned income as largest overpayment driver — FNS tracks this as a
+  //     variance element but exact % is in annual report tables we couldn't access
+  //   - Specific error rates per category (self-emp 20-30%, pay freq 8-10%, etc.)
+  //     are informed estimates, not verified from FNS QC tables
+  //   - Dollar impact per error type — estimated from benefit calculation mechanics
+  //   - Multipliers (2-3x for earned income, 2x for 3+ sources) — commonly cited
+  //     in SNAP policy literature but not verified from a specific FNS table
+  //
+  // APPROACH: Weights are based on the logical risk each factor adds to the
+  // SNAP calculation. They should be calibrated against actual IntakeReview
+  // correction data once sufficient history accumulates.
 
   {
     name: "multiple_income_sources",
-    // USDA QC: cases with 3+ income sources have ~2x baseline error rate.
-    // Each additional source adds pay-frequency conversion and verification complexity.
-    // Probability: ~15-20% error rate among 3+ source cases.
-    // Impact: $100-200/mo per misreported source.
-    description: "Multiple income sources increase pay-frequency and verification error risk (2x baseline per USDA QC)",
+    // Rationale: each additional income source adds a pay-frequency conversion
+    // and verification step. More sources = more opportunities for error.
+    // Weight should be calibrated against local correction data.
+    description: "Multiple income sources increase pay-frequency and verification error risk",
     baseWeight: 10,
     evaluate(intake) {
       const sources = intake.incomeSources || [];
@@ -279,7 +299,6 @@ const RISK_FACTORS = [
 
       if (count <= 2) return { score: 0, detail: null };
 
-      // Each source beyond 2 adds risk — USDA QC shows 2x error rate at 3+ sources
       const score = Math.min(10, (count - 2) * 3);
       return {
         score,
@@ -290,12 +309,11 @@ const RISK_FACTORS = [
 
   {
     name: "earned_income_present",
-    // USDA QC: cases with earned income are 2-3x more likely to have errors
-    // than cases with only unearned/no income. Earned income accounts for
-    // 35-40% of all overpayment dollars — the single largest error category.
-    // Probability: ~20-30% error rate vs. ~8-10% for unearned-only.
-    // Impact: avg $150-200/mo per earned income error.
-    description: "Earned income is the #1 overpayment driver — 2-3x error rate vs. unearned-only cases (USDA QC)",
+    // Rationale: earned income requires pay-frequency conversion, employer
+    // verification, and is subject to change — FNS explicitly classifies
+    // earned income cases as requiring more review time (CBPP).
+    // Exact error multiplier should be calibrated from local correction data.
+    description: "Earned income cases require more verification and are recognized by FNS as higher-complexity",
     baseWeight: 8,
     evaluate(intake) {
       const sources = intake.incomeSources || [];
@@ -316,11 +334,9 @@ const RISK_FACTORS = [
 
   {
     name: "homeownership_income_mismatch",
-    // Owning a home (property tax or insurance present) while reporting very
-    // low income and near-zero liquid resources signals possible unreported
-    // assets or income. Home ownership requires equity/down payment/ongoing costs.
-    // Probability: ~10-15% error rate for low-income homeowners.
-    // Impact: eligibility-affecting (potentially full benefit amount at stake).
+    // Rationale: home ownership (property tax/insurance) implies equity and
+    // ongoing costs that are difficult to sustain on very low income with
+    // minimal liquid resources. Signals possible unreported income or assets.
     description: "Low income + home ownership + minimal liquid resources signals unreported assets or income",
     baseWeight: 10,
     evaluate(intake, calculations) {
@@ -360,11 +376,10 @@ const RISK_FACTORS = [
 
   {
     name: "income_amount_variance",
-    // When the pre-calculated snapMonthlyAmount diverges significantly from
-    // the raw grossAmountPerPeriod × frequency multiplier, it signals either
-    // applicant rounding/estimation error or a conversion mistake.
-    // Probability: ~8-10% of cases have >10% variance.
-    // Impact: directly changes benefit amount proportionally.
+    // Rationale: when the pre-calculated snapMonthlyAmount diverges from
+    // grossAmountPerPeriod × frequency multiplier, it signals applicant
+    // rounding/estimation error or a conversion mistake. Directly changes
+    // the benefit amount proportionally to the variance.
     description: "Variance between reported and calculated monthly income suggests rounding or conversion error",
     baseWeight: 9,
     evaluate(intake) {
@@ -403,11 +418,10 @@ const RISK_FACTORS = [
 
   {
     name: "unrelated_adult_in_household",
-    // Unrelated adults in the SNAP household create complexity around the
-    // "purchases and prepares together" rule. They may be boarders, landlords,
-    // or have separate income streams that should be excluded.
-    // Probability: ~12-15% error rate for households with unrelated adults.
-    // Impact: $80-200/mo (household composition affects both income and benefit).
+    // Rationale: unrelated adults complicate the "purchases and prepares
+    // together" determination (7 CFR §273.1(b)). They may be boarders,
+    // landlords, or have separate income that should be excluded from the
+    // SNAP unit. Household composition is a tracked QC variance element.
     description: "Unrelated adults in household complicate SNAP unit determination and income counting",
     baseWeight: 8,
     evaluate(intake) {
@@ -436,10 +450,8 @@ const RISK_FACTORS = [
 
   {
     name: "age_income_implausibility",
-    // High income from elderly (70+) or very young (16-18) members is
-    // uncommon and may indicate data entry errors or misattribution.
-    // Probability: ~5-8% error rate for age-income outliers.
-    // Impact: $100-300/mo if income is misattributed or fabricated.
+    // Rationale: high earned income from 70+ or 16-18 members is statistically
+    // uncommon and may indicate data entry errors or income misattribution.
     description: "Unusually high income for elderly (70+) or minor (16-18) household members",
     baseWeight: 7,
     evaluate(intake) {
@@ -488,11 +500,10 @@ const RISK_FACTORS = [
 
   {
     name: "child_support_without_children",
-    // Child support paid deduction claimed but no children identified in
-    // the household suggests either a non-custodial parent situation (valid
-    // but needs verification) or a fraudulent deduction claim.
-    // Probability: ~8-12% error rate for child support deductions.
-    // Impact: $50-200/mo in deduction amount.
+    // Rationale: child support paid deduction requires a legally binding
+    // obligation per 7 CFR §273.9(d)(5). No children in household suggests
+    // non-custodial parent (valid but needs court order verification) or
+    // an unsupported deduction claim.
     description: "Child support deduction claimed with no children in household — needs verification of obligation",
     baseWeight: 8,
     evaluate(intake) {
@@ -523,11 +534,11 @@ const RISK_FACTORS = [
 
   {
     name: "benefit_near_maximum",
-    // When the estimated benefit is within $50 of the maximum allotment,
-    // small errors in income or deductions could push the benefit above
-    // the statutory maximum — a clear overpayment QC finding.
-    // Probability: ~5-8% of cases near maximum.
-    // Impact: any error results in overpayment finding in QC audit.
+    // Rationale: when benefit is within $50 of max allotment, any small
+    // income/deduction error could push the benefit above the statutory
+    // maximum — which is a clear overpayment finding in any QC review.
+    // The $57 error tolerance threshold (FY2025, FNS) means even small
+    // amounts above max trigger a finding.
     description: "Estimated benefit near maximum allotment — small errors become QC findings",
     baseWeight: 7,
     evaluate(intake, calculations) {

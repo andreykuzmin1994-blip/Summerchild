@@ -264,7 +264,7 @@ function checkZeroIncomeWithShelter(intake, calculations) {
 
 /**
  * Flag self-employment income sources with unusually high expense ratios.
- * USDA QC data shows overstated self-employment expenses are a top error source.
+ * FNS classifies self-employment as a "harder case" requiring more review.
  * Expenses > 60% of gross is suspicious (the standard deduction is 40%).
  */
 function checkSelfEmploymentExpenses(intake) {
@@ -294,7 +294,7 @@ function checkSelfEmploymentExpenses(intake) {
 
 /**
  * Flag monthly income amounts that look like they may be biweekly or weekly figures.
- * Pay frequency misreporting is ~8-10% of overpayment errors per USDA QC data.
+ * Pay frequency misreporting is a known source of income calculation errors.
  *
  * Heuristic: if someone reports MONTHLY income between $400-$1800, it could plausibly
  * be a biweekly amount (which would double the real monthly income). We flag when
@@ -330,8 +330,8 @@ function checkPayFrequencyPlausibility(intake) {
 
 /**
  * Flag unusually high medical expense claims.
- * Medical expenses over $400/mo are uncommon and account for ~3-5% of overpayment
- * errors when overstated. Only applies to elderly/disabled households that qualify.
+ * Medical expenses over $400/mo are uncommon and warrant documentation.
+ * Only applies to elderly/disabled households that qualify.
  */
 function checkMedicalExpenseReasonableness(intake) {
   const flags = [];
@@ -353,7 +353,7 @@ function checkMedicalExpenseReasonableness(intake) {
 /**
  * Escalate to HIGH when 2+ working-age adults in household report no income.
  * Multiple no-income adults is the single strongest predictor of unreported
- * household income per USDA QC data.
+ * household income.
  */
 function checkMultipleAdultsNoIncome(intake) {
   const flags = [];
@@ -379,7 +379,7 @@ function checkMultipleAdultsNoIncome(intake) {
       type: "MULTIPLE_ADULTS_NO_INCOME",
       severity: "HIGH",
       field: "household",
-      message: `${noIncomeAdultCount} working-age adults in household report no income — this is the #1 predictor of unreported income in SNAP QC audits`,
+      message: `${noIncomeAdultCount} working-age adults in household report no income — strong indicator of unreported income`,
       suggestedAction: "Interview each adult about employment, gig work, and benefit status",
     });
   }
@@ -588,7 +588,7 @@ function checkApplicantIncome(intake) {
  * Flag unrelated adults in the SNAP household.
  * Unrelated adults complicate household composition determination —
  * the "purchases and prepares together" rule must be verified.
- * USDA QC: household composition errors are 12-15% of overpayment dollars.
+ * Household composition is a tracked QC variance element (7 CFR §273.1(b)).
  */
 function checkUnrelatedAdults(intake) {
   const flags = [];
