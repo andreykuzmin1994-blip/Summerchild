@@ -271,6 +271,9 @@ model Intake {
   sessionToken     String       @unique @map("session_token")
   queueNumber      String       @map("queue_number")  // e.g., "A-0247" — lobby call number
   riskScore        RiskScore?   @map("risk_score")
+  predictiveScore  Float?       @map("predictive_score")   // 0-100 numeric risk score from Accuracy Assistant
+  riskFactors      Json?        @map("risk_factors")        // Detailed breakdown of predictive risk factors
+  requiresReview   Boolean      @default(false) @map("requires_review") // True if predictive score exceeds threshold
   expeditedFlag    Boolean      @default(false) @map("expedited_flag")
   expeditedReason  String?      @map("expedited_reason")
   consistencyFlags Json?        @map("consistency_flags")
@@ -298,6 +301,8 @@ model Intake {
   @@index([countyId, status])
   @@index([countyId, riskScore])
   @@index([countyId, expeditedFlag])
+  @@index([countyId, requiresReview])
+  @@index([predictiveScore])
   @@map("intakes")
 }
 
@@ -454,4 +459,27 @@ model AuditLog {
   @@index([countyId, timestamp(sort: Desc)])
   @@index([eventType])
   @@map("audit_logs")
+}
+
+// ============================================================
+// ACCURACY ASSISTANT — Predictive Error Detection
+// ============================================================
+
+/// Cached historical error patterns aggregated from IntakeReview corrections.
+/// Refreshed periodically (e.g., nightly or on-demand by admin).
+model ErrorPattern {
+  id                  String   @id @default(uuid())
+  stateCode           String   @map("state_code") @db.VarChar(2)
+  correctionType      CorrectionType @map("correction_type")
+  patternName         String   @map("pattern_name")        // e.g., "self_employment_high_expenses"
+  occurrenceCount     Int      @map("occurrence_count")     // How many times this pattern led to corrections
+  totalCasesAnalyzed  Int      @map("total_cases_analyzed") // Total cases in the sample
+  errorRate           Float    @map("error_rate")           // occurrenceCount / totalCasesAnalyzed
+  riskWeight          Float    @default(1.0) @map("risk_weight") // Multiplier for scoring (tunable)
+  characteristics     Json?                                 // Common case characteristics for this pattern
+  lastRefreshed       DateTime @default(now()) @map("last_refreshed")
+
+  @@unique([stateCode, correctionType, patternName])
+  @@index([stateCode])
+  @@map("error_patterns")
 }
