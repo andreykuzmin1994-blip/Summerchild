@@ -364,6 +364,235 @@ describe("Accuracy Assistant — Risk Factors", () => {
       expect(result.score).toBe(10);
     });
   });
+
+  // ─── Phase 2 Risk Factors ──────────────────────────────────────────
+
+  describe("multiple_income_sources", () => {
+    const factor = getFactor("multiple_income_sources");
+
+    it("returns 0 for 2 or fewer sources", () => {
+      const intake = buildIntake({
+        incomeSources: [
+          { incomeType: "EMPLOYMENT", grossAmountPerPeriod: 1500 },
+          { incomeType: "SSI", grossAmountPerPeriod: 800 },
+        ],
+      });
+      expect(factor.evaluate(intake).score).toBe(0);
+    });
+
+    it("flags 3+ income sources", () => {
+      const intake = buildIntake({
+        incomeSources: [
+          { incomeType: "EMPLOYMENT", grossAmountPerPeriod: 1500 },
+          { incomeType: "SSI", grossAmountPerPeriod: 800 },
+          { incomeType: "UNEMPLOYMENT", grossAmountPerPeriod: 400 },
+        ],
+      });
+      const result = factor.evaluate(intake);
+      expect(result.score).toBeGreaterThan(0);
+      expect(result.detail).toContain("3 income sources");
+    });
+  });
+
+  describe("earned_income_present", () => {
+    const factor = getFactor("earned_income_present");
+
+    it("returns 0 when no earned income", () => {
+      const intake = buildIntake({
+        incomeSources: [{ incomeType: "SSI", grossAmountPerPeriod: 800 }],
+      });
+      expect(factor.evaluate(intake).score).toBe(0);
+    });
+
+    it("flags earned income presence", () => {
+      const intake = buildIntake({
+        incomeSources: [{ incomeType: "EMPLOYMENT", grossAmountPerPeriod: 1500 }],
+      });
+      const result = factor.evaluate(intake);
+      expect(result.score).toBeGreaterThan(0);
+      expect(result.detail).toContain("earned income");
+    });
+
+    it("scores higher for multiple earned sources", () => {
+      const intake = buildIntake({
+        incomeSources: [
+          { incomeType: "EMPLOYMENT", grossAmountPerPeriod: 1500 },
+          { incomeType: "SELF_EMPLOYMENT", grossAmountPerPeriod: 800 },
+        ],
+      });
+      const result = factor.evaluate(intake);
+      expect(result.score).toBeGreaterThan(5);
+    });
+  });
+
+  describe("homeownership_income_mismatch", () => {
+    const factor = getFactor("homeownership_income_mismatch");
+
+    it("returns 0 for renters", () => {
+      const intake = buildIntake({
+        shelterExpense: { propertyTax: 0, homeownersInsurance: 0, rentOrMortgage: 800 },
+      });
+      expect(factor.evaluate(intake, buildCalc()).score).toBe(0);
+    });
+
+    it("flags homeowner with low income and low resources", () => {
+      const intake = buildIntake({
+        shelterExpense: { propertyTax: 200, homeownersInsurance: 100, rentOrMortgage: 500 },
+        liquidResources: 50,
+      });
+      const calc = buildCalc({ deductions: { grossIncome: 800 } });
+      const result = factor.evaluate(intake, calc);
+      expect(result.score).toBeGreaterThan(0);
+      expect(result.detail).toContain("Homeowner paradox");
+    });
+
+    it("returns 0 for homeowner with adequate income", () => {
+      const intake = buildIntake({
+        shelterExpense: { propertyTax: 200, homeownersInsurance: 100 },
+        liquidResources: 5000,
+      });
+      const calc = buildCalc({ deductions: { grossIncome: 3000 } });
+      expect(factor.evaluate(intake, calc).score).toBe(0);
+    });
+  });
+
+  describe("income_amount_variance", () => {
+    const factor = getFactor("income_amount_variance");
+
+    it("returns 0 when amounts match", () => {
+      const intake = buildIntake({
+        incomeSources: [{
+          incomeType: "EMPLOYMENT",
+          payFrequency: "BIWEEKLY",
+          grossAmountPerPeriod: 800,
+          snapMonthlyAmount: 1733.60, // 800 × 2.167
+        }],
+      });
+      expect(factor.evaluate(intake).score).toBe(0);
+    });
+
+    it("flags significant variance", () => {
+      const intake = buildIntake({
+        incomeSources: [{
+          incomeType: "EMPLOYMENT",
+          payFrequency: "BIWEEKLY",
+          grossAmountPerPeriod: 800,
+          snapMonthlyAmount: 1600, // Should be 1733.60 — 7.7% off but let's make it bigger
+          employerOrPayerName: "Acme Corp",
+        }],
+      });
+      // Make variance > 10%
+      intake.incomeSources[0].snapMonthlyAmount = 1400; // ~19% off
+      const result = factor.evaluate(intake);
+      expect(result.score).toBeGreaterThan(0);
+      expect(result.detail).toContain("variance");
+    });
+  });
+
+  describe("unrelated_adult_in_household", () => {
+    const factor = getFactor("unrelated_adult_in_household");
+
+    it("returns 0 for family members", () => {
+      const intake = buildIntake({
+        householdMembers: [
+          { inSnapHousehold: true, ageRange: "30-39", relationshipToApplicant: "spouse" },
+          { inSnapHousehold: true, ageRange: "0-5", relationshipToApplicant: "child" },
+        ],
+      });
+      expect(factor.evaluate(intake).score).toBe(0);
+    });
+
+    it("flags roommates and unrelated adults", () => {
+      const intake = buildIntake({
+        householdMembers: [
+          { inSnapHousehold: true, ageRange: "25-29", relationshipToApplicant: "roommate" },
+        ],
+      });
+      const result = factor.evaluate(intake);
+      expect(result.score).toBeGreaterThan(0);
+      expect(result.detail).toContain("unrelated");
+    });
+  });
+
+  describe("age_income_implausibility", () => {
+    const factor = getFactor("age_income_implausibility");
+
+    it("returns 0 for typical age-income combinations", () => {
+      const intake = buildIntake({
+        householdMembers: [
+          { id: "m1", inSnapHousehold: true, ageRange: "30-39" },
+        ],
+        incomeSources: [
+          { householdMemberId: "m1", grossAmountPerPeriod: 2000, payFrequency: "MONTHLY" },
+        ],
+      });
+      expect(factor.evaluate(intake).score).toBe(0);
+    });
+
+    it("flags high income for elderly 70+", () => {
+      const intake = buildIntake({
+        householdMembers: [
+          { id: "m1", inSnapHousehold: true, ageRange: "70+" },
+        ],
+        incomeSources: [
+          { householdMemberId: "m1", grossAmountPerPeriod: 3000, payFrequency: "MONTHLY" },
+        ],
+      });
+      const result = factor.evaluate(intake);
+      expect(result.score).toBeGreaterThan(0);
+    });
+  });
+
+  describe("child_support_without_children", () => {
+    const factor = getFactor("child_support_without_children");
+
+    it("returns 0 when no child support claimed", () => {
+      const intake = buildIntake({ childSupportPaid: 0 });
+      expect(factor.evaluate(intake).score).toBe(0);
+    });
+
+    it("flags child support with no minor children", () => {
+      const intake = buildIntake({
+        childSupportPaid: 300,
+        householdMembers: [
+          { inSnapHousehold: true, ageRange: "30-39", relationshipToApplicant: "spouse" },
+        ],
+      });
+      const result = factor.evaluate(intake);
+      expect(result.score).toBe(8);
+      expect(result.detail).toContain("child support");
+    });
+
+    it("returns 0 when minor children present", () => {
+      const intake = buildIntake({
+        childSupportPaid: 300,
+        householdMembers: [
+          { inSnapHousehold: true, ageRange: "0-5", relationshipToApplicant: "child" },
+        ],
+      });
+      expect(factor.evaluate(intake).score).toBe(0);
+    });
+  });
+
+  describe("benefit_near_maximum", () => {
+    const factor = getFactor("benefit_near_maximum");
+
+    it("returns 0 when benefit is well below max", () => {
+      const calc = buildCalc({
+        benefitEstimate: { estimatedBenefit: 200, maxAllotment: 500 },
+      });
+      expect(factor.evaluate(buildIntake(), calc).score).toBe(0);
+    });
+
+    it("flags benefit within $50 of max", () => {
+      const calc = buildCalc({
+        benefitEstimate: { estimatedBenefit: 480, maxAllotment: 500 },
+      });
+      const result = factor.evaluate(buildIntake(), calc);
+      expect(result.score).toBe(7);
+      expect(result.detail).toContain("within $20");
+    });
+  });
 });
 
 describe("Accuracy Assistant — Predictive Scoring", () => {
@@ -519,7 +748,7 @@ describe("Accuracy Assistant — Thresholds", () => {
   });
 
   it("RISK_FACTORS has expected count", () => {
-    expect(RISK_FACTORS.length).toBe(9);
+    expect(RISK_FACTORS.length).toBe(17);
   });
 
   it("all risk factors have required properties", () => {

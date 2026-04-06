@@ -22,6 +22,10 @@ async function runConsistencyChecks(intake, calculations, fiscalYear = 2026) {
   flags.push(...checkSeasonalIncomePattern(intake));
   flags.push(...checkPossibleStudentInHousehold(intake));
   flags.push(...checkApplicantIncome(intake));
+  flags.push(...checkUnrelatedAdults(intake));
+  flags.push(...checkChildSupportWithoutChildren(intake));
+  flags.push(...checkHomeownershipMismatch(intake, calculations));
+  flags.push(...checkBenefitNearMaximum(calculations));
 
   // Prioritize flags: deduplicate by type+member, keep highest severity, limit to top 15
   const flagsByKey = {};
@@ -580,6 +584,133 @@ function checkApplicantIncome(intake) {
   return flags;
 }
 
+/**
+ * Flag unrelated adults in the SNAP household.
+ * Unrelated adults complicate household composition determination —
+ * the "purchases and prepares together" rule must be verified.
+ * USDA QC: household composition errors are 12-15% of overpayment dollars.
+ */
+function checkUnrelatedAdults(intake) {
+  const flags = [];
+  const members = intake.householdMembers || [];
+
+  for (const member of members) {
+    if (!member.inSnapHousehold) continue;
+    if (member.ageRange === "under 18" || (member.ageRange && member.ageRange.startsWith("0-"))) continue;
+
+    const rel = (member.relationshipToApplicant || "").toLowerCase();
+    const isUnrelated = [
+      "roommate", "friend", "unrelated", "boarder", "landlord",
+      "partner", "boyfriend", "girlfriend", "other",
+    ].some((r) => rel.includes(r));
+
+    if (isUnrelated) {
+      flags.push({
+        type: "UNRELATED_ADULT_IN_HOUSEHOLD",
+        severity: "MEDIUM",
+        field: "household",
+        member: member.displayName,
+        message: `${member.displayName} (${rel}) is an unrelated adult — verify purchases-and-prepares-together status per 7 CFR §273.1(b)`,
+        suggestedAction: "Confirm they share meals and food costs. If not, they should be a separate SNAP unit.",
+      });
+    }
+  }
+
+  return flags;
+}
+
+/**
+ * Flag child support paid deduction when no minor children in household.
+ * This is valid for non-custodial parents paying court-ordered support,
+ * but the obligation must be legally binding per 7 CFR §273.9(d)(5).
+ */
+function checkChildSupportWithoutChildren(intake) {
+  const flags = [];
+  const childSupportPaid = intake.childSupportPaid || 0;
+  if (childSupportPaid <= 0) return flags;
+
+  const members = intake.householdMembers || [];
+  const hasMinors = members.some((m) => {
+    if (!m.inSnapHousehold) return false;
+    const rel = (m.relationshipToApplicant || "").toLowerCase();
+    const isChild = ["child", "son", "daughter", "son/daughter", "stepchild", "foster child"].some(
+      (r) => rel.includes(r)
+    );
+    if (!isChild) return false;
+    return m.ageRange === "under 18" || (m.ageRange && m.ageRange.startsWith("0-"));
+  });
+
+  if (!hasMinors) {
+    flags.push({
+      type: "CHILD_SUPPORT_NO_CHILDREN",
+      severity: "MEDIUM",
+      field: "deductions",
+      message: `$${childSupportPaid}/mo child support deduction claimed but no minor children in household — verify court-ordered obligation for non-custodial parent`,
+      suggestedAction: "Request court order or child support documentation per 7 CFR §273.9(d)(5)",
+    });
+  }
+
+  return flags;
+}
+
+/**
+ * Flag homeowners with very low income and minimal liquid resources.
+ * Home ownership implies equity, down payment history, or ongoing
+ * income that may not be fully reported.
+ */
+function checkHomeownershipMismatch(intake, calculations) {
+  const flags = [];
+  const shelter = intake.shelterExpense;
+  if (!shelter) return flags;
+
+  const isHomeowner = (shelter.propertyTax || 0) > 0 || (shelter.homeownersInsurance || 0) > 0;
+  if (!isHomeowner) return flags;
+
+  const grossIncome = calculations.deductions.grossIncome;
+  const liquidResources = intake.liquidResources || 0;
+
+  if (grossIncome < 1200 && liquidResources < 100) {
+    flags.push({
+      type: "HOMEOWNER_LOW_INCOME",
+      severity: "MEDIUM",
+      field: "income",
+      message: `Homeowner (property tax/insurance present) with only $${grossIncome}/mo income and $${liquidResources} liquid resources — verify income completeness and asset status`,
+      suggestedAction: "Ask how mortgage/property costs are covered. Verify no unreported rental income or family assistance.",
+    });
+  }
+
+  return flags;
+}
+
+/**
+ * Flag cases where estimated benefit is within $50 of the maximum allotment.
+ * Near-maximum benefits mean even small income/deduction errors will produce
+ * a QC finding. These cases warrant extra scrutiny.
+ */
+function checkBenefitNearMaximum(calculations) {
+  const flags = [];
+
+  if (!calculations?.benefitEstimate) return flags;
+
+  const estimated = calculations.benefitEstimate.estimatedBenefit || 0;
+  const maxAllotment = calculations.benefitEstimate.maxAllotment || 0;
+
+  if (maxAllotment <= 0 || estimated <= 0) return flags;
+
+  const gap = maxAllotment - estimated;
+  if (gap >= 0 && gap <= 50) {
+    flags.push({
+      type: "BENEFIT_NEAR_MAXIMUM",
+      severity: "MEDIUM",
+      field: "income",
+      message: `Estimated benefit $${estimated} is within $${gap} of maximum allotment $${maxAllotment} — any income/deduction error becomes a QC overpayment finding`,
+      suggestedAction: "Double-check all income amounts and deduction calculations — small errors have outsized impact at this benefit level",
+    });
+  }
+
+  return flags;
+}
+
 function severityRank(severity) {
   return { HIGH: 0, MEDIUM: 1, LOW: 2, INFO: 3 }[severity] ?? 4;
 }
@@ -610,4 +741,8 @@ module.exports = {
   checkSeasonalIncomePattern,
   checkPossibleStudentInHousehold,
   checkApplicantIncome,
+  checkUnrelatedAdults,
+  checkChildSupportWithoutChildren,
+  checkHomeownershipMismatch,
+  checkBenefitNearMaximum,
 };
