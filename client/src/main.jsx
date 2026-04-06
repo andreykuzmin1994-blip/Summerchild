@@ -9,6 +9,7 @@ import IntakeDetail from "./pages/IntakeDetail";
 import LoginPage from "./pages/LoginPage";
 import SupervisorDashboard from "./pages/SupervisorDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+import CompetitiveAnalysis from "./pages/CompetitiveAnalysis";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
@@ -21,6 +22,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/caseworker/intake/:id" element={<IntakeDetail />} />
         <Route path="/supervisor/dashboard" element={<SupervisorDashboard />} />
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
+        <Route path="/competitive-analysis" element={<CompetitiveAnalysis />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>
