@@ -192,18 +192,21 @@ class DialogRailEngine {
       };
     }
 
-    // Check required fields before leaving current section
-    const requiredForNext = target.requiredBefore || [];
-    const missingRequired = requiredForNext.filter(
-      (field) => !this.collectedFields.has(field)
-    );
+    // Check required fields only when skipping sections (not for adjacent forward transitions)
+    const isSkipping = target.order > current.order + 1;
+    if (isSkipping) {
+      const requiredForNext = target.requiredBefore || [];
+      const missingRequired = requiredForNext.filter(
+        (field) => !this.collectedFields.has(field)
+      );
 
-    if (missingRequired.length > 0) {
-      return {
-        allowed: false,
-        reason: `Missing required fields before ${targetSection}: ${missingRequired.join(", ")}`,
-        missingFields: missingRequired,
-      };
+      if (missingRequired.length > 0) {
+        return {
+          allowed: false,
+          reason: `Missing required fields before ${targetSection}: ${missingRequired.join(", ")}`,
+          missingFields: missingRequired,
+        };
+      }
     }
 
     log.info("Section transition", {

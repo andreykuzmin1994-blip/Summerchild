@@ -101,7 +101,7 @@ const STRUCTURAL_PATTERNS = [
 const INJECTION_RESPONSE =
   "I didn't quite catch that. Could you rephrase? I'm here to help with your SNAP application.";
 
-const MAX_INPUT_LENGTH = 2000;
+const MAX_INPUT_LENGTH = 4000;
 const SPECIAL_CHAR_THRESHOLD = 0.25;
 
 /**
@@ -142,6 +142,12 @@ function checkForInjection(userInput) {
   const specialChars = (normalized.match(/[{}\[\]<>\/\\|`~^]/g) || []).length;
   if (normalized.length > 0 && specialChars / normalized.length > SPECIAL_CHAR_THRESHOLD) {
     return { blocked: true, reason: "suspicious_formatting" };
+  }
+
+  // Encoding attack detection (base64, hex, rot13)
+  const encodingResult = detectEncodedPayload(normalized);
+  if (encodingResult.detected) {
+    return { blocked: true, reason: `encoded_payload: ${encodingResult.encoding}` };
   }
 
   return { blocked: false };
@@ -191,6 +197,8 @@ function injectionGuardMiddleware(req, res, next) {
 module.exports = {
   checkForInjection,
   injectionGuardMiddleware,
+  normalizeUnicode,
+  detectEncodedPayload,
   INJECTION_RESPONSE,
   INJECTION_PATTERNS,
   STRUCTURAL_PATTERNS,

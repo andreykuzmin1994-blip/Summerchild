@@ -80,7 +80,9 @@ function checkSystemPromptLeakage(aiResponse) {
 // SNAP-related terms, it's likely off-topic.
 
 const OFF_TOPIC_INDICATORS = [
-  /\b(?:stock|crypto|bitcoin|invest|trading)\b/i,
+  /\b(?:stock market|stocks)\b/i,
+  /\b(?:crypto|bitcoin|ethereum)\b/i,
+  /\b(?:invest(?:ing|ment)?|trading)\b/i,
   /\b(?:recipe|cook|bake|ingredient)\b/i,
   /\b(?:weather|forecast|temperature)\b/i,
   /\b(?:sports?|game|score|team|player)\b/i,
