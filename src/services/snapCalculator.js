@@ -121,6 +121,7 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
     type: "STANDARD",
     amount: standardDeduction,
     notes: `Standard deduction for household size ${householdSize}: $${standardDeduction}`,
+    explanation: `Every SNAP household receives a standard deduction based on household size. For a household of ${householdSize}, this is $${standardDeduction} per month [7 CFR § 273.9(d)(2)].`,
   });
 
   // Step 2: 20% earned income deduction
@@ -134,6 +135,7 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
       type: "EARNED_INCOME_20PCT",
       amount: earnedIncomeDeduction,
       notes: `20% of earned income ($${totalEarned.toFixed(2)}): $${earnedIncomeDeduction}`,
+      explanation: `20% of all earned income (wages, salary, self-employment) is deducted to account for work-related costs. Total earned income is $${totalEarned.toFixed(2)}, so the deduction is $${earnedIncomeDeduction.toFixed(2)} [7 CFR § 273.9(d)(1)].`,
     });
   }
 
@@ -144,6 +146,7 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
       type: "DEPENDENT_CARE",
       amount: dependentCare,
       notes: `Dependent care expense: $${dependentCare}`,
+      explanation: `Dependent care costs that allow a household member to work or attend training are deductible. The reported dependent care expense of $${dependentCare} per month is deducted in full [7 CFR § 273.9(d)(3)].`,
     });
   }
 
@@ -156,10 +159,14 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
       gaConfig.standardMedicalDeduction,
       medicalExpenses - gaConfig.medicalDeductionThreshold
     );
+    const medicalMethod = medicalDeduction === gaConfig.standardMedicalDeduction
+      ? `the standard medical deduction of $${gaConfig.standardMedicalDeduction}`
+      : `the actual excess above $${gaConfig.medicalDeductionThreshold} ($${medicalExpenses} − $${gaConfig.medicalDeductionThreshold} = $${medicalExpenses - gaConfig.medicalDeductionThreshold})`;
     deductions.push({
       type: "MEDICAL",
       amount: medicalDeduction,
       notes: `Medical deduction for elderly/disabled (expenses: $${medicalExpenses}): $${medicalDeduction}`,
+      explanation: `Because the household includes an elderly or disabled member with medical expenses over $${gaConfig.medicalDeductionThreshold}/month, ${medicalMethod} is applied — whichever is greater. The medical deduction is $${medicalDeduction} [7 CFR § 273.9(d)(6)].`,
     });
   }
 
@@ -170,6 +177,7 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
       type: "CHILD_SUPPORT_PAID",
       amount: childSupportPaid,
       notes: `Child support paid: $${childSupportPaid}`,
+      explanation: `Legally owed child support payments made by a household member are deductible. The reported child support payment of $${childSupportPaid} per month is deducted in full [7 CFR § 273.9(d)(4)].`,
     });
   }
 
@@ -196,10 +204,16 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
       : Math.min(excessShelter, gaConfig.shelterDeductionCap);
 
     if (shelterDeduction > 0) {
+      const capNote = hasElderlyOrDisabled
+        ? "Because the household includes an elderly or disabled member, this deduction is not capped."
+        : excessShelter > gaConfig.shelterDeductionCap
+          ? `This is capped at $${gaConfig.shelterDeductionCap} because no elderly or disabled member is in the household.`
+          : `This is below the $${gaConfig.shelterDeductionCap} cap.`;
       deductions.push({
         type: "SHELTER_EXCESS",
         amount: Math.round(shelterDeduction * 100) / 100,
         notes: `Shelter: $${totalShelterCost.toFixed(2)} - 50% of remaining ($${halfRemaining.toFixed(2)}) = $${excessShelter.toFixed(2)}${!hasElderlyOrDisabled && excessShelter > gaConfig.shelterDeductionCap ? ` (capped at $${gaConfig.shelterDeductionCap})` : " (uncapped — elderly/disabled)"}`,
+        explanation: `Shelter excess deduction: total shelter costs ($${totalShelterCost.toFixed(2)}) minus 50% of income after other deductions ($${halfRemaining.toFixed(2)}) = $${excessShelter.toFixed(2)}. ${capNote} Final shelter deduction: $${(Math.round(shelterDeduction * 100) / 100).toFixed(2)} [7 CFR § 273.9(d)(5)].`,
       });
     }
   }
@@ -225,7 +239,12 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
  */
 async function checkGrossIncomeTest(grossIncome, householdSize, stateCode, hasElderlyOrDisabled, fiscalYear = 2026) {
   if (hasElderlyOrDisabled) {
-    return { passes: true, skipped: true, reason: "Elderly/disabled household — gross income test skipped" };
+    return {
+      passes: true,
+      skipped: true,
+      reason: "Elderly/disabled household — gross income test skipped",
+      explanation: "Households with an elderly (60+) or disabled member are exempt from the gross income test [7 CFR § 273.9(a)].",
+    };
   }
 
   const limits = await getSnapLimits(fiscalYear, householdSize);
@@ -243,6 +262,9 @@ async function checkGrossIncomeTest(grossIncome, householdSize, stateCode, hasEl
     reason: passes
       ? `Gross income $${grossIncome.toFixed(2)} ≤ $${limit} (${stateConfig.grossIncomePercent}% FPL for HH${householdSize})`
       : `Gross income $${grossIncome.toFixed(2)} > $${limit} (${stateConfig.grossIncomePercent}% FPL for HH${householdSize}) — DOES NOT PASS`,
+    explanation: passes
+      ? `The household's gross monthly income of $${grossIncome.toFixed(2)} is at or below the limit of $${limit} (${stateConfig.grossIncomePercent}% of the Federal Poverty Level for a household of ${householdSize}). The gross income test is passed [7 CFR § 273.9(a)].`
+      : `The household's gross monthly income of $${grossIncome.toFixed(2)} exceeds the limit of $${limit} (${stateConfig.grossIncomePercent}% of the Federal Poverty Level for a household of ${householdSize}). The gross income test is not passed [7 CFR § 273.9(a)].`,
   };
 }
 
@@ -261,6 +283,9 @@ async function checkNetIncomeTest(netIncome, householdSize, fiscalYear = 2026) {
     reason: passes
       ? `Net income $${netIncome.toFixed(2)} ≤ $${limit} (100% FPL for HH${householdSize})`
       : `Net income $${netIncome.toFixed(2)} > $${limit} (100% FPL for HH${householdSize}) — DOES NOT PASS`,
+    explanation: passes
+      ? `After all deductions, the household's net monthly income is $${netIncome.toFixed(2)}, which is at or below the limit of $${limit} (100% of the Federal Poverty Level for a household of ${householdSize}). The net income test is passed [7 CFR § 273.9(a)].`
+      : `After all deductions, the household's net monthly income is $${netIncome.toFixed(2)}, which exceeds the limit of $${limit} (100% of the Federal Poverty Level for a household of ${householdSize}). The net income test is not passed [7 CFR § 273.9(a)].`,
   };
 }
 
@@ -281,11 +306,21 @@ async function calculateBenefitEstimate(netIncome, householdSize, fiscalYear = 2
 
   benefit = Math.max(0, benefit);
 
+  const minBenefitApplied = householdSize <= gaConfig.minimumBenefitMaxHouseholdSize
+    && benefit === gaConfig.minimumBenefit
+    && limits.maxAllotment - expectedContribution < gaConfig.minimumBenefit
+    && limits.maxAllotment - expectedContribution > 0;
+
   return {
     maxAllotment: limits.maxAllotment,
     expectedContribution,
     estimatedBenefit: benefit,
     householdSize,
+    explanation: benefit === 0
+      ? `The household's expected contribution (30% of net income = $${expectedContribution}) equals or exceeds the maximum allotment of $${limits.maxAllotment} for a household of ${householdSize}. The estimated benefit is $0 [7 CFR § 273.10(e)].`
+      : minBenefitApplied
+        ? `The maximum allotment for a household of ${householdSize} is $${limits.maxAllotment}. After subtracting the expected contribution of $${expectedContribution} (30% of net income), the calculated benefit would be $${limits.maxAllotment - expectedContribution}. Because households of 1–2 members receive at least $${gaConfig.minimumBenefit}, the estimated monthly benefit is $${benefit} [7 CFR § 273.10(e)].`
+        : `The maximum allotment for a household of ${householdSize} is $${limits.maxAllotment}. After subtracting the expected contribution of $${expectedContribution} (30% of net income), the estimated monthly benefit is $${benefit} [7 CFR § 273.10(e)].`,
   };
 }
 
@@ -307,9 +342,20 @@ function checkExpeditedEligibility(grossMonthlyIncome, liquidResources, monthlyR
     reasons.push(`Combined income + resources ($${combined.toFixed(2)}) < monthly shelter costs ($${shelter.toFixed(2)})`);
   }
 
+  const explanationParts = [];
+  if (grossMonthlyIncome < 150 && liquidResources < 100) {
+    explanationParts.push(`Gross monthly income ($${grossMonthlyIncome.toFixed(2)}) is under $150 and liquid resources ($${liquidResources.toFixed(2)}) are under $100.`);
+  }
+  if (combined < shelter) {
+    explanationParts.push(`Combined income and resources ($${combined.toFixed(2)}) are less than monthly shelter costs ($${shelter.toFixed(2)}).`);
+  }
+
   return {
     eligible: reasons.length > 0,
     reasons,
+    explanation: reasons.length > 0
+      ? `This household qualifies for expedited (7-day) processing. ${explanationParts.join(" ")} [7 CFR § 273.2(i)(1)].`
+      : `This household does not meet expedited processing criteria. Gross income is $${grossMonthlyIncome.toFixed(2)}, liquid resources are $${liquidResources.toFixed(2)}, and combined ($${combined.toFixed(2)}) is not less than shelter costs ($${shelter.toFixed(2)}) [7 CFR § 273.2(i)(1)].`,
   };
 }
 
@@ -318,6 +364,46 @@ function checkExpeditedEligibility(grossMonthlyIncome, liquidResources, monthlyR
  */
 function getStandardUtilityAllowance(utilityType) {
   return gaConfig.standardUtilityAllowances[utilityType] || 0;
+}
+
+/**
+ * Generate a complete plain-language explanation of a SNAP eligibility calculation.
+ * Designed for caseworker review — every step cites the applicable CFR section.
+ */
+function generateCalculationExplanation(result) {
+  const lines = [];
+  const { deductions, grossIncomeTest, netIncomeTest, benefitEstimate, expedited } = result;
+
+  lines.push(`SNAP ELIGIBILITY CALCULATION SUMMARY`);
+  lines.push(`Household size: ${deductions.householdSize}${deductions.hasElderlyOrDisabled ? " (includes elderly/disabled member)" : ""}`);
+  lines.push(`Gross monthly income: $${deductions.grossIncome.toFixed(2)}`);
+  lines.push(``);
+
+  // Deductions narrative
+  lines.push(`DEDUCTIONS APPLIED:`);
+  for (const d of deductions.deductions) {
+    lines.push(`  ${d.type}: $${d.amount.toFixed(2)} — ${d.explanation}`);
+  }
+  lines.push(`Total deductions: $${deductions.totalDeductions.toFixed(2)}`);
+  lines.push(`Net monthly income: $${deductions.netIncome.toFixed(2)}`);
+  lines.push(``);
+
+  // Income tests
+  lines.push(`INCOME TESTS:`);
+  lines.push(`  Gross income test: ${grossIncomeTest.explanation}`);
+  lines.push(`  Net income test: ${netIncomeTest.explanation}`);
+  lines.push(``);
+
+  // Benefit estimate
+  lines.push(`BENEFIT ESTIMATE:`);
+  lines.push(`  ${benefitEstimate.explanation}`);
+  lines.push(``);
+
+  // Expedited
+  lines.push(`EXPEDITED PROCESSING:`);
+  lines.push(`  ${expedited.explanation}`);
+
+  return lines.join("\n");
 }
 
 /**
@@ -356,7 +442,7 @@ async function calculateFullEligibility(intake, stateCode = "GA", fiscalYear = 2
 
   const eligible = grossTest.passes && netTest.passes;
 
-  return {
+  const fullResult = {
     eligible,
     grossIncomeTest: grossTest,
     netIncomeTest: netTest,
@@ -364,6 +450,10 @@ async function calculateFullEligibility(intake, stateCode = "GA", fiscalYear = 2
     benefitEstimate,
     expedited,
   };
+
+  fullResult.explanation = generateCalculationExplanation(fullResult);
+
+  return fullResult;
 }
 
 module.exports = {
@@ -376,6 +466,7 @@ module.exports = {
   checkExpeditedEligibility,
   getStandardUtilityAllowance,
   calculateFullEligibility,
+  generateCalculationExplanation,
   getSnapLimits,
   getStateSnapConfig,
   FREQUENCY_MULTIPLIERS,
