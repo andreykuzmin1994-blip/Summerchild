@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require("uuid");
 const { buildSystemPrompt, sendMessage, determineCurrentSection } = require("../services/aiAssistant");
 const { PIIStripper } = require("../middleware/piiStripper");
 const { injectionGuardMiddleware } = require("../middleware/injectionGuard");
+const { runOutputGuardrails, BLOCKED_RESPONSE } = require("../middleware/outputGuardrails");
 const { validateExtractedData } = require("../services/dataValidator");
 const { validateAIResponse } = require("../services/aiResponseValidator");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
@@ -608,8 +609,43 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       },
     });
 
-    // Restore PII in display message
-    const displayMessage = session.piiStripper.restore(aiResponse.displayMessage);
+    // ── Output guardrails ──────────────────────────────────────────
+    // Check the AI's display message for policy violations before the
+    // applicant sees it. This catches: eligibility determinations,
+    // system prompt leakage, off-topic drift, PII echo, excess length.
+    let finalDisplayMessage = aiResponse.displayMessage;
+    const guardrailResult = runOutputGuardrails(finalDisplayMessage);
+
+    if (guardrailResult.blocked) {
+      // Severe violation — replace entire response with safe fallback
+      log.error("Output guardrail BLOCKED response", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        violations: guardrailResult.violations,
+      });
+      await logAuditEvent({
+        type: EVENTS.AI_API_CALL,
+        actorType: ACTORS.SYSTEM,
+        actorId: "output-guardrail",
+        intakeId: intake.id,
+        details: {
+          event: "RESPONSE_BLOCKED",
+          violations: guardrailResult.violations,
+        },
+      });
+      finalDisplayMessage = BLOCKED_RESPONSE;
+    } else if (guardrailResult.correctedMessage) {
+      // Auto-corrected (PII redacted, length trimmed)
+      log.warn("Output guardrail corrected response", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        violations: guardrailResult.violations,
+      });
+      finalDisplayMessage = guardrailResult.correctedMessage;
+    }
+
+    // Restore PII-mapped display names in the final message
+    const displayMessage = session.piiStripper.restore(finalDisplayMessage);
     const section = determineCurrentSection(session.conversationHistory);
 
     res.json({
@@ -617,6 +653,10 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       section,
       extractedData: validatedData,
       model: aiResponse.model,
+      guardrails: guardrailResult.violations.length > 0 ? {
+        corrected: !!guardrailResult.correctedMessage,
+        violations: guardrailResult.violations.map((v) => v.rail),
+      } : undefined,
     });
   } catch (error) {
     log.error("Failed to process message", {
