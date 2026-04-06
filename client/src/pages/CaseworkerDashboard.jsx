@@ -17,11 +17,10 @@ export default function CaseworkerDashboard() {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
-  const token = localStorage.getItem("token");
   const caseworker = JSON.parse(localStorage.getItem("caseworker") || "{}");
 
   useEffect(() => {
-    if (!token) {
+    if (!caseworker.id) {
       navigate("/login");
       return;
     }
@@ -36,11 +35,11 @@ export default function CaseworkerDashboard() {
       if (filter) params.set("riskScore", filter);
 
       const res = await fetch(`/api/caseworker/dashboard?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
       });
 
       if (res.status === 401) {
-        localStorage.removeItem("token");
+        localStorage.removeItem("caseworker");
         navigate("/login");
         return;
       }
@@ -57,7 +56,7 @@ export default function CaseworkerDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    localStorage.removeItem("caseworker");
     localStorage.removeItem("caseworker");
     navigate("/login");
   };

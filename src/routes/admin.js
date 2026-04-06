@@ -1,6 +1,6 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
-const { requireAuth, requireRole } = require("../middleware/auth");
+const { requireVerifiedAuth, requireRole } = require("../middleware/auth");
 const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
 
@@ -14,7 +14,7 @@ const log = child("admin");
  * GET /api/admin/stats
  * Aggregate statistics for the county (supervisors and admins only).
  */
-router.get("/stats", requireAuth, requireRole("SUPERVISOR", "ADMIN"), async (req, res) => {
+router.get("/stats", requireVerifiedAuth, requireRole("SUPERVISOR", "ADMIN"), async (req, res) => {
   try {
     const countyId = req.user.countyId;
 
@@ -81,7 +81,7 @@ router.get("/stats", requireAuth, requireRole("SUPERVISOR", "ADMIN"), async (req
  * GET /api/admin/audit-log
  * View audit logs (admin only).
  */
-router.get("/audit-log", requireAuth, requireRole("ADMIN"), async (req, res) => {
+router.get("/audit-log", requireVerifiedAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     const { limit = 100, offset = 0, eventType } = req.query;
     const where = { countyId: req.user.countyId };
@@ -124,7 +124,7 @@ router.get("/audit-log", requireAuth, requireRole("ADMIN"), async (req, res) => 
  * GET /api/admin/export/intakes
  * Export intakes as CSV for reporting (supervisors and admins).
  */
-router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), async (req, res) => {
+router.get("/export/intakes", requireVerifiedAuth, requireRole("SUPERVISOR", "ADMIN"), async (req, res) => {
   try {
     const { status, startDate, endDate, page } = req.query;
     const where = { countyId: req.user.countyId };
@@ -211,7 +211,12 @@ router.get("/export/intakes", requireAuth, requireRole("SUPERVISOR", "ADMIN"), a
 
     const csvContent = [
       headers.join(","),
-      ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")),
+      ...rows.map((row) => row.map((cell) => {
+        const str = String(cell).replace(/"/g, '""');
+        // Prevent CSV formula injection — prefix with single quote if cell starts with =, +, -, @
+        if (/^[=+\-@]/.test(str)) return `"'${str}"`;
+        return `"${str}"`;
+      }).join(",")),
     ].join("\n");
 
     const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");

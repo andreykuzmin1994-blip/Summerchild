@@ -33,7 +33,6 @@ function normalizeUnicode(text) {
  * bypass pattern-matching filters.
  * Returns { detected: boolean, encoding?: string }
  */
-// eslint-disable-next-line no-unused-vars
 function detectEncodedPayload(text) {
   // Base64 detection: look for long base64-encoded strings
   const base64Pattern = /[A-Za-z0-9+/]{40,}={0,2}/;
@@ -119,6 +118,12 @@ function checkForInjection(userInput) {
   // Unicode normalization: defeats homoglyph and invisible-character bypasses
   const normalized = normalizeUnicode(raw);
 
+  // Encoded payload detection (base64, hex, rot13)
+  const encodedCheck = detectEncodedPayload(normalized);
+  if (encodedCheck.detected) {
+    return { blocked: true, reason: `encoded_payload: ${encodedCheck.encoding}` };
+  }
+
   // Pattern matching against normalized text
   for (const pattern of INJECTION_PATTERNS) {
     if (pattern.test(normalized)) {
@@ -190,6 +195,8 @@ function injectionGuardMiddleware(req, res, next) {
 
 module.exports = {
   checkForInjection,
+  detectEncodedPayload,
+  normalizeUnicode,
   injectionGuardMiddleware,
   INJECTION_RESPONSE,
   INJECTION_PATTERNS,
