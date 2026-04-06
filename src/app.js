@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
+const cookieParser = require("cookie-parser");
 const path = require("path");
 const { apiLimiter } = require("./middleware/rateLimiter");
 const { ipAllowlistMiddleware } = require("./middleware/ipAllowlist");
@@ -34,7 +35,7 @@ app.use(helmet({
       objectSrc: ["'none'"],
     },
   },
-  hsts: { maxAge: 31536000, includeSubDomains: true },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
   referrerPolicy: { policy: "no-referrer" },
 }));
 
@@ -58,6 +59,7 @@ app.use(cors({
 
 // Body parsing
 app.use(express.json({ limit: "10kb" }));
+app.use(cookieParser());
 
 // IP allowlist — restrict access to county network ranges
 app.use(ipAllowlistMiddleware);
@@ -70,9 +72,42 @@ app.use("/api/intake", intakeRoutes);
 app.use("/api/caseworker", caseworkerRoutes);
 app.use("/api/admin", adminRoutes);
 
-// General health check — DB connectivity, session store, uptime
+// Public health check — minimal liveness probe (no internal details)
 app.get("/api/health", async (req, res) => {
   const prisma = require("./lib/prisma");
+
+  const health = {
+    status: "ok",
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch {
+    health.status = "degraded";
+  }
+
+  const statusCode = health.status === "ok" ? 200 : 503;
+  res.status(statusCode).json(health);
+});
+
+// Detailed health check — DB, session store, memory (auth required)
+app.get("/api/health/detailed", async (req, res) => {
+  const jwt = require("jsonwebtoken");
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  try {
+    const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET, { algorithms: ["HS256"] });
+    if (!["SUPERVISOR", "ADMIN"].includes(decoded.role)) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+
+  const prismaClient = require("./lib/prisma");
   const { sessionStore } = require("./services/sessionStore");
 
   const health = {
@@ -83,23 +118,20 @@ app.get("/api/health", async (req, res) => {
     checks: {},
   };
 
-  // Database connectivity check
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await prismaClient.$queryRaw`SELECT 1`;
     health.checks.database = { status: "ok" };
   } catch {
     health.checks.database = { status: "error", message: "Database connection failed" };
     health.status = "degraded";
   }
 
-  // Session store check
   health.checks.sessions = {
     status: "ok",
     type: process.env.REDIS_URL ? "redis" : "memory",
     activeSessions: sessionStore.size ?? "unknown",
   };
 
-  // Memory usage
   const mem = process.memoryUsage();
   health.checks.memory = {
     heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
@@ -121,7 +153,7 @@ app.get("/api/health/ai", async (req, res) => {
   }
   const jwt = require("jsonwebtoken");
   try {
-    const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+    const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET, { algorithms: ["HS256"] });
     if (!["SUPERVISOR", "ADMIN"].includes(decoded.role)) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }

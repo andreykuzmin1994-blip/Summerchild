@@ -29,8 +29,8 @@ const EVENT_CATEGORIES = {
   "Admin Events": ["ADMIN_USER_CREATED", "ADMIN_USER_MODIFIED", "ADMIN_USER_DEACTIVATED", "DATA_EXPORT"],
 };
 
-function authFetch(url, token, options = {}) {
-  return fetch(url, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` } });
+function authFetch(url, _token, options = {}) {
+  return fetch(url, { ...options, credentials: "include", headers: { ...options.headers } });
 }
 
 export default function AdminDashboard() {
@@ -58,12 +58,12 @@ export default function AdminDashboard() {
   const [exportLoading, setExportLoading] = useState(false);
 
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
   const caseworker = JSON.parse(localStorage.getItem("caseworker") || "{}");
+  const token = "cookie"; // Token is now in httpOnly cookie; this variable is kept for authFetch signature compatibility
   const AUDIT_LIMIT = 50;
 
   useEffect(() => {
-    if (!token) { navigate("/login"); return; }
+    if (!caseworker.id) { navigate("/login"); return; }
     if (caseworker.role !== "ADMIN") {
       navigate("/caseworker/dashboard");
       return;
@@ -77,7 +77,7 @@ export default function AdminDashboard() {
   }, [activeTab, auditOffset, eventTypeFilter]);
 
   const handleAuthError = (res) => {
-    if (res.status === 401) { localStorage.removeItem("token"); navigate("/login"); return true; }
+    if (res.status === 401) { localStorage.removeItem("caseworker"); navigate("/login"); return true; }
     if (res.status === 429) { setError("Too many requests. Please wait a moment."); return true; }
     return false;
   };
@@ -219,7 +219,7 @@ export default function AdminDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    localStorage.removeItem("caseworker");
     localStorage.removeItem("caseworker");
     navigate("/login");
   };

@@ -298,6 +298,7 @@ model Intake {
   @@index([countyId, status])
   @@index([countyId, riskScore])
   @@index([countyId, expeditedFlag])
+  @@index([sessionToken])
   @@map("intakes")
 }
 

@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const prisma = require("../lib/prisma");
 
 if (!process.env.JWT_SECRET) {
   throw new Error("FATAL: JWT_SECRET environment variable is required. Server cannot start without it.");
@@ -42,13 +43,12 @@ async function comparePassword(password, hash) {
  */
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.cookies?.token;
+  if (!token) {
     return res.status(401).json({ error: "Authentication required" });
   }
-
-  const token = authHeader.slice(7);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
     req.user = decoded;
     next();
   } catch {
@@ -61,19 +61,16 @@ function requireAuth(req, res, next) {
  * Catches stale tokens where role/county changed or account was deactivated.
  */
 async function requireVerifiedAuth(req, res, next) {
-  // First run standard JWT auth
+  // Accept token from Authorization header or httpOnly cookie
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.cookies?.token;
+  if (!token) {
     return res.status(401).json({ error: "Authentication required" });
   }
-
-  const token = authHeader.slice(7);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
 
     // Server-side verification: check caseworker still exists and is active
-    const { PrismaClient } = require("@prisma/client");
-    const prisma = new PrismaClient();
     const caseworker = await prisma.caseworker.findUnique({
       where: { id: decoded.id },
       select: { id: true, countyId: true, role: true, deactivatedAt: true },

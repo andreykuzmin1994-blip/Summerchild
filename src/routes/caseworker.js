@@ -1,6 +1,6 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
-const { requireAuth, requireRole, generateToken, comparePassword, hashPassword } = require("../middleware/auth");
+const { requireVerifiedAuth, requireRole, generateToken, comparePassword, hashPassword } = require("../middleware/auth");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { calculateFullEligibility } = require("../services/snapCalculator");
@@ -53,6 +53,14 @@ router.post("/login", authLimiter, async (req, res) => {
       ip: req.ip,
     });
 
+    // Set JWT as httpOnly cookie (XSS-safe — not accessible via JavaScript)
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 8 * 60 * 60 * 1000, // 8 hours
+    });
+
     res.json({
       token,
       caseworker: {
@@ -72,7 +80,7 @@ router.post("/login", authLimiter, async (req, res) => {
  * GET /api/caseworker/dashboard
  * Queue view: list of completed intakes for the caseworker's county.
  */
-router.get("/dashboard", requireAuth, async (req, res) => {
+router.get("/dashboard", requireVerifiedAuth, async (req, res) => {
   try {
     const { riskScore, status } = req.query;
     const where = {
@@ -147,7 +155,7 @@ router.get("/dashboard", requireAuth, async (req, res) => {
  * GET /api/caseworker/intake/:id
  * Full intake detail with calculations, flags, and conversation log.
  */
-router.get("/intake/:id", requireAuth, async (req, res) => {
+router.get("/intake/:id", requireVerifiedAuth, async (req, res) => {
   try {
     const intake = await prisma.intake.findFirst({
       where: {
@@ -222,7 +230,7 @@ router.get("/intake/:id", requireAuth, async (req, res) => {
  * POST /api/caseworker/intake/:id/review
  * Mark an intake as reviewed with optional correction feedback.
  */
-router.post("/intake/:id/review", requireAuth, async (req, res) => {
+router.post("/intake/:id/review", requireVerifiedAuth, async (req, res) => {
   try {
     const { correctionsMade, correctionType, correctionDetails, notes, reviewerConfirmsAllData } = req.body;
 
@@ -306,7 +314,7 @@ router.post("/intake/:id/review", requireAuth, async (req, res) => {
  * POST /api/caseworker/register
  * Register a new caseworker (admin only).
  */
-router.post("/register", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async (req, res) => {
+router.post("/register", requireVerifiedAuth, requireRole("ADMIN", "SUPERVISOR"), async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
     if (!name || !email || !password) {
@@ -359,7 +367,7 @@ router.post("/register", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async 
  * GET /api/caseworker/users
  * List all caseworkers for the county (admin/supervisor only).
  */
-router.get("/users", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async (req, res) => {
+router.get("/users", requireVerifiedAuth, requireRole("ADMIN", "SUPERVISOR"), async (req, res) => {
   try {
     const caseworkers = await prisma.caseworker.findMany({
       where: { countyId: req.user.countyId, deactivatedAt: null },
@@ -384,7 +392,7 @@ router.get("/users", requireAuth, requireRole("ADMIN", "SUPERVISOR"), async (req
  * PUT /api/caseworker/users/:id
  * Update a caseworker's role (admin only).
  */
-router.put("/users/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
+router.put("/users/:id", requireVerifiedAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     const { role } = req.body;
     if (!role || !["CASEWORKER", "SUPERVISOR", "ADMIN"].includes(role)) {
@@ -423,7 +431,7 @@ router.put("/users/:id", requireAuth, requireRole("ADMIN"), async (req, res) => 
  * POST /api/caseworker/users/:id/reset-password
  * Admin resets a caseworker's password.
  */
-router.post("/users/:id/reset-password", requireAuth, requireRole("ADMIN"), async (req, res) => {
+router.post("/users/:id/reset-password", requireVerifiedAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     const { newPassword } = req.body;
     const passwordError = validatePasswordComplexity(newPassword);
@@ -464,7 +472,7 @@ router.post("/users/:id/reset-password", requireAuth, requireRole("ADMIN"), asyn
  * DELETE /api/caseworker/users/:id
  * Deactivate a caseworker (admin only). Soft-delete approach.
  */
-router.delete("/users/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
+router.delete("/users/:id", requireVerifiedAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     if (req.params.id === req.user.id) {
       return res.status(400).json({ error: "Cannot deactivate your own account" });
