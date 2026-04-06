@@ -1,7 +1,7 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const { v4: uuidv4 } = require("uuid");
-const { buildSystemPrompt, buildSystemPromptWithContext, sendMessage, determineCurrentSection } = require("../services/aiAssistant");
+const { buildSystemPromptWithContext, sendMessage, determineCurrentSection } = require("../services/aiAssistant");
 const { PIIStripper } = require("../middleware/piiStripper");
 const { injectionGuardMiddleware } = require("../middleware/injectionGuard");
 const { validateExtractedData, validateDisplayName } = require("../services/dataValidator");
@@ -22,6 +22,8 @@ const {
   blockExfiltration,
 } = require("../middleware/outputSanitizer");
 const { validateConversationContext } = require("../middleware/conversationContext");
+const { runOutputGuardrails, BLOCKED_RESPONSE } = require("../middleware/outputGuardrails");
+const { DialogRailEngine, checkRetrievalRail } = require("../services/dialogRails");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
 

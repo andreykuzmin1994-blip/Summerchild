@@ -210,7 +210,7 @@ function wrapUserMessage(rawMessage) {
  * output (Instructor-style retry pattern). This runs up to MAX_HEAL_RETRIES
  * times per failed block.
  */
-async function sendMessage(conversationHistory, systemPrompt, userMessage, sessionToken) {
+async function sendMessage(conversationHistory, systemPrompt, userMessage, _sessionToken) {
   const modelTier = selectModel(userMessage);
 
   // Sandwich defense: wrap user input with XML delimiters + instruction reminder

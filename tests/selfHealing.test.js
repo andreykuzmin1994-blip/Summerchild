@@ -95,10 +95,9 @@ describe("Self-healing validation", () => {
     });
 
     it("extracts multiple data blocks", () => {
-      const response = [
-        "Got it. <!--CUSHION_DATA:{"field":"income_source","gross_per_period":2000}-->",
-        "<!--CUSHION_DATA:{"field":"shelter_rent","rent":800}-->",
-      ].join(" ");
+      const block1 = '{"field":"income_source","gross_per_period":2000}';
+      const block2 = '{"field":"shelter_rent","rent":800}';
+      const response = `Got it. <!--CUSHION_DATA:${block1}--> <!--CUSHION_DATA:${block2}-->`;
       const data = extractStructuredData(response);
       expect(data).toHaveLength(2);
     });
