@@ -161,9 +161,8 @@ function validateAIResponse(dataBlock) {
 
   const schema = SCHEMA_MAP[field];
   if (!schema) {
-    // Unknown field — pass through with a warning (backward compatibility)
-    // The existing dataValidator will handle the generic case
-    return { valid: true, data: dataBlock, warnings: [`Unknown field type: ${field}`] };
+    // Unknown field — reject to prevent unvalidated data from reaching the database
+    return { valid: false, errors: [`Unknown field type: ${field} — not in schema registry`] };
   }
 
   const result = schema.safeParse(dataBlock);

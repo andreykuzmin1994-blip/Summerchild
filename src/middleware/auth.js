@@ -57,6 +57,46 @@ function requireAuth(req, res, next) {
 }
 
 /**
+ * Middleware: verify JWT claims against database state.
+ * Catches stale tokens where role/county changed or account was deactivated.
+ */
+async function requireVerifiedAuth(req, res, next) {
+  // First run standard JWT auth
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+
+  const token = authHeader.slice(7);
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    // Server-side verification: check caseworker still exists and is active
+    const { PrismaClient } = require("@prisma/client");
+    const prisma = new PrismaClient();
+    const caseworker = await prisma.caseworker.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, countyId: true, role: true, deactivatedAt: true },
+    });
+
+    if (!caseworker || caseworker.deactivatedAt) {
+      return res.status(401).json({ error: "User account is inactive or not found" });
+    }
+
+    // Verify JWT claims match current server state
+    if (caseworker.countyId !== decoded.countyId || caseworker.role !== decoded.role) {
+      return res.status(403).json({ error: "Token is stale — please log in again" });
+    }
+
+    req.user = decoded;
+    req.caseworker = caseworker;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
+/**
  * Middleware: require specific role(s).
  */
 function requireRole(...roles) {
@@ -73,5 +113,6 @@ module.exports = {
   hashPassword,
   comparePassword,
   requireAuth,
+  requireVerifiedAuth,
   requireRole,
 };

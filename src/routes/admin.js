@@ -96,6 +96,23 @@ router.get("/audit-log", requireAuth, requireRole("ADMIN"), async (req, res) => 
 
     const total = await prisma.auditLog.count({ where });
 
+    // Meta-audit: log who accessed the audit logs
+    const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
+    await logAuditEvent({
+      type: EVENTS.ADMIN_AUDIT_LOG_ACCESSED,
+      actorType: ACTORS.ADMIN,
+      actorId: req.user.id,
+      countyId: req.user.countyId,
+      ip: req.ip,
+      details: {
+        queryLimit: parseInt(limit),
+        queryOffset: parseInt(offset),
+        eventTypeFilter: eventType || null,
+        resultsReturned: logs.length,
+        totalAvailable: total,
+      },
+    });
+
     res.json({ logs, total, limit: parseInt(limit), offset: parseInt(offset) });
   } catch (error) {
     console.error("[AUDIT LOG]", error);

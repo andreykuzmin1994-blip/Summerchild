@@ -27,4 +27,13 @@ const authLimiter = rateLimit({
   message: { error: "Too many login attempts, please try again later" },
 });
 
-module.exports = { apiLimiter, aiMessageLimiter, authLimiter };
+// Intake start endpoint limiter (prevent session exhaustion)
+const intakeStartLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // 10 new intakes per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many new intakes started — please wait before starting another" },
+});
+
+module.exports = { apiLimiter, aiMessageLimiter, authLimiter, intakeStartLimiter };

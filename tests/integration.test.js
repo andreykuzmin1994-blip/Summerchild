@@ -252,10 +252,11 @@ describe("AI Response Validation Pipeline", () => {
     expect(validateAIResponse({ field: "medical_expenses", value: 99999 }).valid).toBe(false);
   });
 
-  it("handles unknown field types gracefully", () => {
+  it("rejects unknown field types to prevent unvalidated data", () => {
     const result = validateAIResponse({ field: "future_new_field", value: "something" });
-    expect(result.valid).toBe(true);
-    expect(result.warnings).toBeTruthy();
+    expect(result.valid).toBe(false);
+    expect(result.errors).toBeTruthy();
+    expect(result.errors[0]).toContain("Unknown field type");
   });
 
   it("rejects non-object input", () => {
@@ -344,8 +345,8 @@ describe("Circuit Breaker Observability", () => {
     const metrics = provider.getMetrics();
 
     expect(metrics.activeProvider).toBe("anthropic");
-    expect(metrics.circuitBreaker).toBeTruthy();
-    expect(metrics.circuitBreaker.state).toBe("CLOSED");
+    expect(metrics.circuitBreakers).toBeTruthy();
+    expect(metrics.circuitBreakers.anthropic.state).toBe("CLOSED");
     expect(metrics.failoverStats).toBeTruthy();
     expect(metrics.failoverStats.total).toBe(0);
   });

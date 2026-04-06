@@ -4,20 +4,35 @@ const { v4: uuidv4 } = require("uuid");
 const { buildSystemPrompt, buildSystemPromptWithContext, sendMessage, determineCurrentSection } = require("../services/aiAssistant");
 const { PIIStripper } = require("../middleware/piiStripper");
 const { injectionGuardMiddleware } = require("../middleware/injectionGuard");
-const { runOutputGuardrails, BLOCKED_RESPONSE } = require("../middleware/outputGuardrails");
-const { DialogRailEngine, checkRetrievalRail } = require("../services/dialogRails");
-const { validateExtractedData } = require("../services/dataValidator");
+const { validateExtractedData, validateDisplayName } = require("../services/dataValidator");
 const { validateAIResponse } = require("../services/aiResponseValidator");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { runConsistencyChecks } = require("../services/consistencyChecker");
-const { aiMessageLimiter } = require("../middleware/rateLimiter");
+const { aiMessageLimiter, intakeStartLimiter } = require("../middleware/rateLimiter");
 const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
 const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
+const {
+  sanitizeForDisplay,
+  validateDataBlockCount,
+  sanitizeAIResponse,
+  scanOutputForPII,
+  blockExfiltration,
+} = require("../middleware/outputSanitizer");
+const { validateConversationContext } = require("../middleware/conversationContext");
 
 const { getStandardUtilityAllowance, calculateMonthlyIncome, FREQUENCY_MULTIPLIERS } = require("../services/snapCalculator");
+
+// Maximum conversation turns per intake session to prevent AI cost abuse.
+// A normal SNAP intake requires ~20 turns. 50 provides generous headroom.
+const MAX_CONVERSATION_TURNS = parseInt(process.env.MAX_CONVERSATION_TURNS || "50", 10);
+
+// Per-session token budget: max total tokens (input + output) consumed per session.
+// A typical SNAP intake uses ~15K input + 5K output tokens. 200K provides generous headroom
+// while still capping abuse from adversarial long conversations.
+const MAX_SESSION_TOKENS = parseInt(process.env.MAX_SESSION_TOKENS || "200000", 10);
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -377,12 +392,13 @@ async function generateDocumentChecklist(intakeId) {
  * Start a new intake session. Returns session token, queue number, and welcome message.
  * Expects: { countyId, language, displayName } where displayName is "FirstName L." format.
  */
-router.post("/start", requireStaffPin, async (req, res) => {
+router.post("/start", requireStaffPin, intakeStartLimiter, async (req, res) => {
   try {
     const { countyId, language, displayName } = req.body;
 
-    if (!displayName || displayName.length < 2) {
-      return res.status(400).json({ error: "Please provide your first name and last initial (e.g., 'Maria G.')" });
+    const nameErrors = validateDisplayName(displayName);
+    if (nameErrors.length > 0) {
+      return res.status(400).json({ error: nameErrors[0] });
     }
 
     const sessionToken = uuidv4();
@@ -439,6 +455,7 @@ router.post("/start", requireStaffPin, async (req, res) => {
       piiStripper,
       dialogRails: dialogRails.serialize(),
       turnNumber: 0,
+      totalTokensUsed: 0,
       language: language || "en",
       lastActivity: Date.now(),
     });
@@ -514,6 +531,12 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       return res.status(400).json({ error: "sessionToken and message are required" });
     }
 
+    // Validate session token format (UUID v4) to prevent enumeration/injection
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!UUID_REGEX.test(sessionToken)) {
+      return res.status(400).json({ error: "Invalid session token format" });
+    }
+
     const session = await sessionStore.get(sessionToken);
     if (!session) {
       return res.status(404).json({ error: "Session not found or expired" });
@@ -524,7 +547,38 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       await sessionStore.delete(sessionToken);
       return res.status(440).json({ error: "Session expired due to inactivity. Please start a new intake." });
     }
+
+    // Prevent AI cost abuse: cap conversation turns per session
+    if (session.turnNumber >= MAX_CONVERSATION_TURNS) {
+      log.warn("Conversation turn limit reached", {
+        correlationId: req.correlationId,
+        intakeId: session.intakeId,
+        turnNumber: session.turnNumber,
+      });
+      return res.status(429).json({
+        error: "This session has reached the maximum number of messages. Please complete your intake or start a new session.",
+      });
+    }
+
+    // Token budget enforcement: prevent cost abuse from long/complex conversations
+    if ((session.totalTokensUsed || 0) >= MAX_SESSION_TOKENS) {
+      log.warn("Session token budget exhausted", {
+        correlationId: req.correlationId,
+        intakeId: session.intakeId,
+        totalTokensUsed: session.totalTokensUsed,
+      });
+      return res.status(429).json({
+        error: "This session has used its allocated resources. Please complete your intake or start a new session.",
+      });
+    }
+
     await sessionStore.touch(sessionToken);
+
+    // Session expiration warning (5 minutes before timeout)
+    const timeRemaining = SESSION_TTL_MS - (Date.now() - session.lastActivity);
+    const sessionExpiringWarning = timeRemaining < 5 * 60 * 1000
+      ? { secondsRemaining: Math.round(timeRemaining / 1000), message: "Your session will expire soon due to inactivity. Please continue with your application." }
+      : undefined;
 
     // Verify session matches intake
     const intake = await prisma.intake.findFirst({
@@ -569,38 +623,132 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       sessionToken
     );
 
-    // ── Dialog Rails: OUTPUT RAIL — check AI response + extracted data
-    const outputRailResult = dialogRails.checkOutputRail(aiResponse.extractedData);
-    if (!outputRailResult.passed) {
-      log.warn("Dialog rail output violations", {
+    // ── AI Output Guardrail Pipeline (OWASP LLM Top 10 2025 defense-in-depth) ──
+
+    // Guard 1: Data block count limit
+    const blockCheck = validateDataBlockCount(aiResponse.rawMessage);
+    if (!blockCheck.safe) {
+      log.warn("Excessive CUSHION_DATA blocks in AI response — possible injection", {
         correlationId: req.correlationId,
         intakeId: intake.id,
-        violations: outputRailResult.violations,
-        state: dialogRails.getState(),
+        dataBlockCount: blockCheck.count,
+      });
+      return res.json({
+        message: "I had trouble processing that. Could you repeat your answer?",
+        section: determineCurrentSection(session.conversationHistory),
+        extractedData: [],
+        model: aiResponse.model,
       });
     }
 
-    // ── Dialog Rails: auto-advance section if enough data collected
-    const nextSection = dialogRails.suggestNextSection();
-    if (nextSection) {
-      const transition = dialogRails.transition(nextSection);
-      if (transition.allowed) {
-        log.info("Dialog rail: auto-advanced section", {
-          correlationId: req.correlationId,
-          to: nextSection,
-        });
-      }
+    // Guard 2: Exfiltration blocker — strip markdown images, external URLs, long query params
+    const exfilCheck = blockExfiltration(aiResponse.displayMessage);
+    if (!exfilCheck.safe) {
+      log.warn("Exfiltration attempt blocked in AI response", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        threats: exfilCheck.threats,
+      });
+      aiResponse.displayMessage = exfilCheck.cleaned;
     }
 
-    // Persist dialog rail state back to session
-    session.dialogRails = dialogRails.serialize();
+    // Guard 3: Output PII scanner — catch any PII the model generates
+    const piiCheck = scanOutputForPII(aiResponse.displayMessage);
+    if (!piiCheck.clean) {
+      log.warn("PII detected in AI output — stripping before delivery", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+        piiTypes: piiCheck.piiFound,
+      });
+      // Re-run the PII stripper on the output to redact
+      aiResponse.displayMessage = session.piiStripper.strip(aiResponse.displayMessage);
+      await logAuditEvent({
+        type: EVENTS.PII_STRIPPED,
+        actorType: ACTORS.SYSTEM,
+        actorId: "output-guardrail",
+        intakeId: intake.id,
+        details: { direction: "output", piiTypes: piiCheck.piiFound },
+      });
+    }
 
-    // Update conversation history
+    // Guard 4: Section-aware context validation — the strongest signal.
+    // Checks three axes: are the data fields appropriate for the current
+    // section? Does the response vocabulary match the section? Does the
+    // response contain forbidden content (eligibility claims, PII requests)?
+    const currentSection = determineCurrentSection(session.conversationHistory);
+    const contextCheck = validateConversationContext(
+      currentSection,
+      aiResponse.displayMessage,
+      aiResponse.extractedData,
+    );
+
+    if (!contextCheck.ok) {
+      // Log all failures for monitoring
+      if (!contextCheck.fieldCheck.valid) {
+        log.warn("Unexpected data fields for current section", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          section: currentSection,
+          unexpectedFields: contextCheck.fieldCheck.unexpectedFields,
+        });
+      }
+      if (!contextCheck.relevanceCheck.relevant) {
+        log.warn("Off-topic AI response for current section", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          section: currentSection,
+          score: contextCheck.relevanceCheck.score,
+          reason: contextCheck.relevanceCheck.reason,
+        });
+      }
+      if (!contextCheck.forbiddenCheck.clean) {
+        log.error("Forbidden content detected in AI response", {
+          correlationId: req.correlationId,
+          intakeId: intake.id,
+          violations: contextCheck.forbiddenCheck.violations,
+        });
+        // Forbidden content is a hard block — return safe fallback
+        return res.json({
+          message: "I need to stay focused on your SNAP application. Could you repeat your last answer?",
+          section: currentSection,
+          extractedData: [],
+          model: aiResponse.model,
+        });
+      }
+      // Field mismatches and low relevance are soft warnings — log but don't block.
+      // The AI sometimes legitimately transitions between sections mid-turn.
+    }
+
+    // Guard 5: Canary trip check (handled in aiAssistant.js — logged but double-check)
+    if (aiResponse.canaryTripped) {
+      log.error("Canary token leaked — system prompt exposed", {
+        correlationId: req.correlationId,
+        intakeId: intake.id,
+      });
+      await logAuditEvent({
+        type: EVENTS.INJECTION_BLOCKED,
+        actorType: ACTORS.SYSTEM,
+        actorId: "canary-detector",
+        intakeId: intake.id,
+        details: { event: "CANARY_TOKEN_LEAKED", model: aiResponse.model },
+      });
+      return res.json({
+        message: aiResponse.displayMessage,
+        section: determineCurrentSection(session.conversationHistory),
+        extractedData: [],
+        model: aiResponse.model,
+      });
+    }
+
+    // Update conversation history and track token usage
     session.conversationHistory.push(
       { role: "user", content: message },
-      { role: "assistant", content: aiResponse.rawMessage }
+      { role: "assistant", content: sanitizeAIResponse(aiResponse.rawMessage) }
     );
     session.turnNumber += 1;
+    session.totalTokensUsed = (session.totalTokensUsed || 0) +
+      (aiResponse.usage?.input_tokens || 0) +
+      (aiResponse.usage?.output_tokens || 0);
     await sessionStore.set(sessionToken, session);
 
     // Validate extracted data with Zod schemas, then legacy validator, then persist
@@ -649,11 +797,11 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       }
     }
 
-    // Log conversation turns
+    // Log conversation turns (sanitize user input to prevent stored XSS in caseworker dashboard)
     await withRetry(
       () => prisma.conversationLog.createMany({
         data: [
-          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: message },
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: sanitizeForDisplay(message) },
           { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: aiResponse.displayMessage },
         ],
       }),
@@ -718,15 +866,7 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       section,
       extractedData: validatedData,
       model: aiResponse.model,
-      dialogState: {
-        section: dialogRails.currentSection,
-        turnsInSection: dialogRails.turnInSection,
-        collectedFields: Object.fromEntries(dialogRails.collectedFields),
-      },
-      guardrails: guardrailResult.violations.length > 0 ? {
-        corrected: !!guardrailResult.correctedMessage,
-        violations: guardrailResult.violations.map((v) => v.rail),
-      } : undefined,
+      ...(sessionExpiringWarning && { sessionExpiringWarning }),
     });
   } catch (error) {
     log.error("Failed to process message", {
@@ -746,9 +886,14 @@ router.get("/:id/summary", async (req, res) => {
     const { id } = req.params;
     const sessionToken = req.headers["x-session-token"] || req.query.sessionToken;
 
+    // Session token is required — prevents enumeration of intake IDs
+    if (!sessionToken) {
+      return res.status(401).json({ error: "Session token required" });
+    }
+
     const intake = await withRetry(
       () => prisma.intake.findFirst({
-        where: { id, ...(sessionToken ? { sessionToken } : {}) },
+        where: { id, sessionToken },
         include: {
           applicant: true,
           householdMembers: true,
@@ -796,6 +941,10 @@ router.post("/:id/complete", async (req, res) => {
     const { id } = req.params;
     const { sessionToken } = req.body;
 
+    if (!sessionToken) {
+      return res.status(401).json({ error: "Session token required" });
+    }
+
     const intake = await withRetry(
       () => prisma.intake.findFirst({
         where: { id, sessionToken, status: "IN_PROGRESS" },
@@ -811,6 +960,21 @@ router.post("/:id/complete", async (req, res) => {
 
     if (!intake) {
       return res.status(404).json({ error: "Active intake not found" });
+    }
+
+    // Validate minimum data before allowing completion
+    const completionErrors = [];
+    if (!intake.applicant) {
+      completionErrors.push("Applicant information is missing");
+    }
+    if ((intake.incomeSources || []).length === 0 && (intake.householdMembers || []).length === 0) {
+      completionErrors.push("No income sources or household members recorded — at minimum, applicant income is required");
+    }
+    if (completionErrors.length > 0) {
+      return res.status(400).json({
+        error: "Intake cannot be completed — missing required information",
+        details: completionErrors,
+      });
     }
 
     // Run calculations

@@ -9,6 +9,14 @@ const FREQUENCY_MULTIPLIERS = {
   MONTHLY: 1,
 };
 
+// SNAP calculation constants — 7 CFR 273
+const SNAP_CONSTANTS = {
+  EARNED_INCOME_DEDUCTION_RATE: 0.20,  // 20% per 7 CFR 273.11(c)(1)
+  SHELTER_EXCESS_THRESHOLD: 0.50,      // 50% of countable income
+  EXPECTED_CONTRIBUTION_RATE: 0.30,    // 30% of net income
+  MINIMUM_BENEFIT: 24,                 // $24 minimum for HH 1-2
+};
+
 /**
  * Read SNAP limits from the FederalSnapData table for a given fiscal year and household size.
  * For household sizes > 8, extrapolates using per-member increments.
@@ -61,12 +69,16 @@ function calculateMonthlyIncome(incomeSource) {
     const gross = incomeSource.selfEmploymentGross || incomeSource.grossAmountPerPeriod;
     const expenses = incomeSource.selfEmploymentExpenses || 0;
 
-    const itemizedNet = gross - expenses;
-    const standardNet = gross * (1 - gaConfig.selfEmploymentStandardDeductionRate);
+    // Use integer cents to avoid floating-point errors
+    const grossCents = Math.round(gross * 100);
+    const expensesCents = Math.round(expenses * 100);
+
+    const itemizedNetCents = grossCents - expensesCents;
+    const standardNetCents = Math.round(grossCents * (1 - gaConfig.selfEmploymentStandardDeductionRate));
 
     // Use whichever method produces lower countable income (more favorable to applicant)
-    const net = Math.min(itemizedNet, standardNet);
-    return Math.max(0, net);
+    const netCents = Math.min(itemizedNetCents, standardNetCents);
+    return Math.max(0, netCents) / 100;
   }
 
   const multiplier = FREQUENCY_MULTIPLIERS[incomeSource.payFrequency];
@@ -74,7 +86,10 @@ function calculateMonthlyIncome(incomeSource) {
     throw new Error(`Unknown pay frequency: ${incomeSource.payFrequency}`);
   }
 
-  return Math.round(incomeSource.grossAmountPerPeriod * multiplier * 100) / 100;
+  // Fixed-point: convert to cents, multiply, then back to dollars
+  const grossCents = Math.round(incomeSource.grossAmountPerPeriod * 100);
+  const monthlyCents = Math.round(grossCents * multiplier);
+  return monthlyCents / 100;
 }
 
 /**
@@ -129,7 +144,7 @@ async function calculateDeductions(intake, fiscalYear = 2026) {
     .filter((s) => isEarnedIncome(s.incomeType))
     .reduce((sum, s) => sum + (s.snapMonthlyAmount ?? calculateMonthlyIncome(s)), 0);
 
-  const earnedIncomeDeduction = Math.round(totalEarned * gaConfig.earnedIncomeDeductionRate * 100) / 100;
+  const earnedIncomeDeduction = Math.round(Math.round(totalEarned * 100) * gaConfig.earnedIncomeDeductionRate) / 100;
   if (earnedIncomeDeduction > 0) {
     deductions.push({
       type: "EARNED_INCOME_20PCT",
@@ -296,7 +311,7 @@ async function checkNetIncomeTest(netIncome, householdSize, fiscalYear = 2026) {
  */
 async function calculateBenefitEstimate(netIncome, householdSize, fiscalYear = 2026) {
   const limits = await getSnapLimits(fiscalYear, householdSize);
-  const expectedContribution = Math.ceil(netIncome * 0.30);
+  const expectedContribution = Math.ceil(netIncome * SNAP_CONSTANTS.EXPECTED_CONTRIBUTION_RATE);
   let benefit = limits.maxAllotment - expectedContribution;
 
   // Minimum benefit for 1-2 person households
@@ -470,4 +485,5 @@ module.exports = {
   getSnapLimits,
   getStateSnapConfig,
   FREQUENCY_MULTIPLIERS,
+  SNAP_CONSTANTS,
 };
