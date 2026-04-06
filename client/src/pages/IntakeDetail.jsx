@@ -26,10 +26,10 @@ export default function IntakeDetail() {
   const [error, setError] = useState(null);
   const [reviewError, setReviewError] = useState(null);
 
-  const token = localStorage.getItem("token");
+  const caseworker = JSON.parse(localStorage.getItem("caseworker") || "{}");
 
   useEffect(() => {
-    if (!token) { navigate("/login"); return; }
+    if (!caseworker.id) { navigate("/login"); return; }
     loadIntake();
   }, [id]);
 
@@ -37,7 +37,7 @@ export default function IntakeDetail() {
     setError(null);
     try {
       const res = await fetch(`/api/caseworker/intake/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
       });
       if (res.status === 401) { navigate("/login"); return; }
       if (!res.ok) throw new Error("Failed to load intake details. Please try again.");
@@ -55,7 +55,8 @@ export default function IntakeDetail() {
     try {
       const res = await fetch(`/api/caseworker/intake/${id}/review`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(reviewForm),
       });
       if (!res.ok) throw new Error("Failed to submit review. Please try again.");

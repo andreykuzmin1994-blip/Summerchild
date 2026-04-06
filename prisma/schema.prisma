@@ -301,8 +301,7 @@ model Intake {
   @@index([countyId, status])
   @@index([countyId, riskScore])
   @@index([countyId, expeditedFlag])
-  @@index([countyId, requiresReview])
-  @@index([predictiveScore])
+  @@index([sessionToken])
   @@map("intakes")
 }
 

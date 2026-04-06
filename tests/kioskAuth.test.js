@@ -12,14 +12,16 @@ function mockReqRes(body = {}) {
 }
 
 describe("hashPin", () => {
-  it("produces a consistent SHA-256 hash", () => {
-    const hash = hashPin("1234");
-    expect(hash).toBe(hashPin("1234"));
-    expect(hash).toHaveLength(64);
+  it("produces a bcrypt hash", async () => {
+    const hash = await hashPin("1234");
+    expect(hash).toMatch(/^\$2[aby]?\$/);
+    expect(hash.length).toBeGreaterThan(50);
   });
 
-  it("produces different hashes for different PINs", () => {
-    expect(hashPin("1234")).not.toBe(hashPin("5678"));
+  it("produces different hashes for same PIN (salted)", async () => {
+    const hash1 = await hashPin("1234");
+    const hash2 = await hashPin("1234");
+    expect(hash1).not.toBe(hash2); // bcrypt uses random salt
   });
 });
 
@@ -36,65 +38,67 @@ describe("requireStaffPin", () => {
     process.env.NODE_ENV = originalEnv.NODE_ENV;
   });
 
-  it("allows request with valid PIN", () => {
+  it("allows request with valid PIN", async () => {
     const pin = "9876";
-    process.env.KIOSK_STAFF_PINS = hashPin(pin);
+    process.env.KIOSK_STAFF_PINS = await hashPin(pin);
     const { req, res, next } = mockReqRes({ staffPin: pin });
 
-    requireStaffPin(req, res, next);
+    await requireStaffPin(req, res, next);
 
     expect(next).toHaveBeenCalled();
-    expect(req.staffPinUsed).toBe(hashPin(pin).slice(0, 8));
+    expect(req.staffPinUsed).toBeDefined();
+    expect(req.staffPinUsed).toHaveLength(8);
   });
 
-  it("rejects request with invalid PIN", () => {
-    process.env.KIOSK_STAFF_PINS = hashPin("9876");
+  it("rejects request with invalid PIN", async () => {
+    process.env.KIOSK_STAFF_PINS = await hashPin("9876");
     const { req, res, next } = mockReqRes({ staffPin: "0000" });
 
-    requireStaffPin(req, res, next);
+    await requireStaffPin(req, res, next);
 
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(401);
   });
 
-  it("rejects request with no PIN provided", () => {
-    process.env.KIOSK_STAFF_PINS = hashPin("9876");
+  it("rejects request with no PIN provided", async () => {
+    process.env.KIOSK_STAFF_PINS = await hashPin("9876");
     const { req, res, next } = mockReqRes({});
 
-    requireStaffPin(req, res, next);
+    await requireStaffPin(req, res, next);
 
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(401);
   });
 
-  it("supports multiple PINs", () => {
+  it("supports multiple PINs", async () => {
     const pins = ["1111", "2222", "3333"];
-    process.env.KIOSK_STAFF_PINS = pins.map(hashPin).join(",");
+    const hashes = await Promise.all(pins.map(hashPin));
+    process.env.KIOSK_STAFF_PINS = hashes.join(",");
 
     // Each PIN should work
     for (const pin of pins) {
       const { req, res, next } = mockReqRes({ staffPin: pin });
-      requireStaffPin(req, res, next);
+      await requireStaffPin(req, res, next);
       expect(next).toHaveBeenCalled();
     }
   });
 
-  it("allows all in development when no PINs configured", () => {
+  it("allows all in development when no PINs configured", async () => {
     process.env.KIOSK_STAFF_PINS = "";
     process.env.NODE_ENV = "development";
     const { req, res, next } = mockReqRes({});
 
-    requireStaffPin(req, res, next);
+    await requireStaffPin(req, res, next);
 
     expect(next).toHaveBeenCalled();
   });
 
-  it("blocks all in production when no PINs configured", () => {
+  it("blocks all in production when no PINs configured", async () => {
     process.env.KIOSK_STAFF_PINS = "";
     process.env.NODE_ENV = "production";
     const { req, res, next } = mockReqRes({});
 
-    requireStaffPin(req, res, next);
+    await requireStaffPin(req, res, next);
 
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(503);

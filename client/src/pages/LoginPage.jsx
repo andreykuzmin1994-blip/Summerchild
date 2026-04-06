@@ -27,7 +27,7 @@ export default function LoginPage() {
         return;
       }
 
-      localStorage.setItem("token", data.token);
+      // Token is now stored as httpOnly cookie (set by server) — not in localStorage
       localStorage.setItem("caseworker", JSON.stringify(data.caseworker));
 
       // Route based on role

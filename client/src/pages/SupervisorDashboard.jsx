@@ -12,11 +12,10 @@ export default function SupervisorDashboard() {
   const [exportLoading, setExportLoading] = useState(false);
   const navigate = useNavigate();
 
-  const token = localStorage.getItem("token");
   const caseworker = JSON.parse(localStorage.getItem("caseworker") || "{}");
 
   useEffect(() => {
-    if (!token) { navigate("/login"); return; }
+    if (!caseworker.id) { navigate("/login"); return; }
     if (caseworker.role !== "SUPERVISOR" && caseworker.role !== "ADMIN") {
       navigate("/caseworker/dashboard");
       return;
@@ -32,12 +31,12 @@ export default function SupervisorDashboard() {
       if (filter) params.set("riskScore", filter);
 
       const [statsRes, intakesRes] = await Promise.all([
-        fetch("/api/admin/stats", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/caseworker/dashboard?${params}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/admin/stats", { credentials: "include" }),
+        fetch(`/api/caseworker/dashboard?${params}`, { credentials: "include" }),
       ]);
 
       if (statsRes.status === 401 || intakesRes.status === 401) {
-        localStorage.removeItem("token");
+        localStorage.removeItem("caseworker");
         navigate("/login");
         return;
       }
@@ -59,7 +58,7 @@ export default function SupervisorDashboard() {
   const handleExport = async () => {
     setExportLoading(true);
     try {
-      const res = await fetch("/api/admin/export/intakes", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/admin/export/intakes", { credentials: "include" });
       if (res.status === 401) { navigate("/login"); return; }
       if (!res.ok) throw new Error("Failed to export data");
       const blob = await res.blob();
@@ -76,7 +75,7 @@ export default function SupervisorDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    localStorage.removeItem("caseworker");
     localStorage.removeItem("caseworker");
     navigate("/login");
   };

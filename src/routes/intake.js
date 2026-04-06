@@ -395,7 +395,7 @@ async function generateDocumentChecklist(intakeId) {
  * Start a new intake session. Returns session token, queue number, and welcome message.
  * Expects: { countyId, language, displayName } where displayName is "FirstName L." format.
  */
-router.post("/start", requireStaffPin, intakeStartLimiter, async (req, res) => {
+router.post("/start", requireStaffPin, injectionGuardMiddleware, intakeStartLimiter, async (req, res) => {
   try {
     const { countyId, language, displayName } = req.body;
 
@@ -884,7 +884,7 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
  * GET /api/intake/:id/summary
  * Get the full intake summary with calculations and consistency checks.
  */
-router.get("/:id/summary", async (req, res) => {
+router.get("/:id/summary", aiMessageLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const sessionToken = req.headers["x-session-token"] || req.query.sessionToken;
@@ -892,6 +892,12 @@ router.get("/:id/summary", async (req, res) => {
     // Session token is required — prevents enumeration of intake IDs
     if (!sessionToken) {
       return res.status(401).json({ error: "Session token required" });
+    }
+
+    // Validate session token format (UUID v4)
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!UUID_REGEX.test(sessionToken)) {
+      return res.status(400).json({ error: "Invalid session token format" });
     }
 
     const intake = await withRetry(
@@ -960,6 +966,12 @@ router.post("/:id/complete", async (req, res) => {
 
     if (!sessionToken) {
       return res.status(401).json({ error: "Session token required" });
+    }
+
+    // Validate session token format (UUID v4)
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!UUID_REGEX.test(sessionToken)) {
+      return res.status(400).json({ error: "Invalid session token format" });
     }
 
     const intake = await withRetry(

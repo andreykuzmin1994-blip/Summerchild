@@ -22,9 +22,13 @@ class PIIStripper {
       cleaned = cleaned.replaceAll(realName, placeholder);
     }
 
-    // Replace SSN patterns — catches all formats: 123-45-6789, 123 45 6789, 123456789
+    // Replace SSN patterns — catches all formats: 123-45-6789, 123 45 6789, 123456789, 123-456-789
     cleaned = cleaned.replace(/\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g, "[REDACTED]");
+    cleaned = cleaned.replace(/\b\d{3}[-]\d{3}[-]\d{3}\b/g, "[REDACTED]");
     cleaned = cleaned.replace(/\b\d{9}\b/g, "[REDACTED]");
+
+    // Replace date of birth patterns — MM/DD/YYYY, M/D/YYYY, MM-DD-YYYY
+    cleaned = cleaned.replace(/\b(?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])[-/](?:19|20)\d{2}\b/g, "[REDACTED]");
 
     // Replace phone patterns — catches (404) 555-0123, 404.555.0123, +1-404-555-0123, ext
     cleaned = cleaned.replace(

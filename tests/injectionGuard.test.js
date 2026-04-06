@@ -50,10 +50,10 @@ describe("injectionGuard", () => {
     expect(result.reason).toBe("excessive_length");
   });
 
-  it("allows long but within-limit messages (under 4000 chars)", () => {
-    // ESL applicants may write long, rambling answers — 3000 chars is fine
-    const longButOk = "I work at the restaurant and my boss pay me every two weeks about eight hundred dollar. ".repeat(33);
-    expect(longButOk.length).toBeLessThan(4000);
+  it("allows long but within-limit messages (under 2000 chars)", () => {
+    // ESL applicants may write long, rambling answers — 1800 chars is fine
+    const longButOk = "I work at the restaurant and my boss pay me every two weeks about eight hundred dollar. ".repeat(20);
+    expect(longButOk.length).toBeLessThan(2000);
     expect(checkForInjection(longButOk).blocked).toBe(false);
   });
 

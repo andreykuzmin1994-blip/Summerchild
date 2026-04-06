@@ -64,10 +64,11 @@ function normalizeIP(ip) {
 function ipAllowlistMiddleware(req, res, next) {
   const config = process.env.ALLOWED_IP_RANGES;
 
-  // No allowlist configured — allow all but warn in production
+  // No allowlist configured — block in production, allow in development
   if (!config || config.trim() === "") {
     if (process.env.NODE_ENV === "production") {
-      console.warn("[IP ALLOWLIST] ALLOWED_IP_RANGES not set — all IPs are permitted. This is unsafe in production.");
+      console.error("[IP ALLOWLIST] ALLOWED_IP_RANGES not set — blocking all requests in production");
+      return res.status(503).json({ error: "Service misconfigured. Contact administrator." });
     }
     return next();
   }

@@ -74,7 +74,7 @@ jobs:
           cache: npm
       - run: npm ci
       # npm audit — fail on high/critical vulnerabilities
-      - run: npm audit --audit-level=high || true
+      - run: npm audit --audit-level=high
       # Check for known vulnerable patterns in source
       - run: npm run lint
 
