@@ -19,7 +19,6 @@
  *   node tests/ragas/ragasEvaluator.js --category deductions
  */
 
-const path = require("path");
 const questions = require("./snapPolicyQuestions.json");
 
 // ── Metric 1: Context Precision ──────────────────────────────────────────
@@ -152,6 +151,7 @@ function runEvaluation(options = {}) {
   }
 
   const count = results.length;
+  /* eslint-disable security/detect-object-injection */
   for (const key of Object.keys(avgScores)) {
     avgScores[key] = Math.round((avgScores[key] / count) * 100) / 100;
   }
@@ -183,6 +183,7 @@ function runEvaluation(options = {}) {
     difficulties[diff].avgOverall = Math.round((difficulties[diff].totalOverall / difficulties[diff].count) * 100) / 100;
     delete difficulties[diff].totalOverall;
   }
+  /* eslint-enable security/detect-object-injection */
 
   // Find weakest questions (lowest overall score)
   const weakest = [...results].sort((a, b) => a.scores.overall - b.scores.overall).slice(0, 5);

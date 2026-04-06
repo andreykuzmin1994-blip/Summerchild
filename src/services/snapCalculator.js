@@ -378,7 +378,7 @@ function checkExpeditedEligibility(grossMonthlyIncome, liquidResources, monthlyR
  * Get the standard utility allowance for Georgia based on utility type.
  */
 function getStandardUtilityAllowance(utilityType) {
-  return gaConfig.standardUtilityAllowances[utilityType] || 0;
+  return gaConfig.standardUtilityAllowances[utilityType] || 0; // eslint-disable-line security/detect-object-injection
 }
 
 /**

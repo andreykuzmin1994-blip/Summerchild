@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { setupPrismaMock, FY2026_DATA } from "./helpers/mockPrisma.js";
+import { setupPrismaMock } from "./helpers/mockPrisma.js";
 
 /**
  * SNAP Eligibility Rules — Gherkin-Style BDD Tests
