@@ -6,6 +6,7 @@ const { authLimiter } = require("../middleware/rateLimiter");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { eligibilityCache, statsCache } = require("../services/queryCache");
 const { refreshErrorPatterns, getAccuracyStats } = require("../services/errorPredictor");
+const { discoverPatterns } = require("../services/livePatternDetector");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -531,7 +532,7 @@ router.delete("/users/:id", requireVerifiedAuth, requireRole("ADMIN"), async (re
  * GET /api/caseworker/accuracy/stats
  * Accuracy statistics for the caseworker's county.
  */
-router.get("/accuracy/stats", requireAuth, async (req, res) => {
+router.get("/accuracy/stats", requireVerifiedAuth, async (req, res) => {
   try {
     const stats = await getAccuracyStats(req.user.countyId);
     res.json(stats);
@@ -545,7 +546,7 @@ router.get("/accuracy/stats", requireAuth, async (req, res) => {
  * GET /api/caseworker/accuracy/patterns
  * View cached error patterns for the caseworker's state.
  */
-router.get("/accuracy/patterns", requireAuth, async (req, res) => {
+router.get("/accuracy/patterns", requireVerifiedAuth, async (req, res) => {
   try {
     const county = await prisma.county.findUnique({
       where: { id: req.user.countyId },
@@ -572,7 +573,7 @@ router.get("/accuracy/patterns", requireAuth, async (req, res) => {
  */
 router.post(
   "/accuracy/refresh-patterns",
-  requireAuth,
+  requireVerifiedAuth,
   requireRole("ADMIN", "SUPERVISOR"),
   async (req, res) => {
     try {
@@ -612,7 +613,7 @@ router.post(
  * Cases flagged by Accuracy Assistant for mandatory review.
  * Prioritized by predictive score (highest risk first).
  */
-router.get("/accuracy/review-queue", requireAuth, async (req, res) => {
+router.get("/accuracy/review-queue", requireVerifiedAuth, async (req, res) => {
   try {
     const intakes = await prisma.intake.findMany({
       where: {
@@ -658,6 +659,97 @@ router.get("/accuracy/review-queue", requireAuth, async (req, res) => {
   } catch (error) {
     console.error("[REVIEW QUEUE]", error);
     res.status(500).json({ error: "Failed to load review queue" });
+  }
+});
+
+/**
+ * POST /api/caseworker/accuracy/discover-patterns
+ * Run live pattern discovery from historical correction data (supervisor/admin only).
+ * Unlike refresh-patterns (which uses hardcoded pattern templates), this
+ * discovers NEW patterns statistically from the data itself.
+ */
+router.post(
+  "/accuracy/discover-patterns",
+  requireVerifiedAuth,
+  requireRole("ADMIN", "SUPERVISOR"),
+  async (req, res) => {
+    try {
+      const county = await prisma.county.findUnique({
+        where: { id: req.user.countyId },
+      });
+      if (!county) {
+        return res.status(404).json({ error: "County not found" });
+      }
+
+      const { correctionType, minSampleSize } = req.body;
+
+      const results = await discoverPatterns(county.stateCode, {
+        correctionType: correctionType || null,
+        minSampleSize: minSampleSize || undefined,
+      });
+
+      await logAuditEvent({
+        type: "LIVE_PATTERNS_DISCOVERED",
+        actorType: ACTORS.CASEWORKER,
+        actorId: req.user.id,
+        countyId: req.user.countyId,
+        ip: req.ip,
+        details: {
+          stateCode: county.stateCode,
+          patternsDiscovered: results.patternsDiscovered,
+          totalCasesAnalyzed: results.totalCases,
+        },
+      });
+
+      res.json(results);
+    } catch (error) {
+      console.error("[DISCOVER PATTERNS]", error);
+      res.status(500).json({ error: "Failed to run pattern discovery" });
+    }
+  }
+);
+
+/**
+ * GET /api/caseworker/accuracy/live-patterns
+ * View discovered live patterns for this county's state.
+ */
+router.get("/accuracy/live-patterns", requireVerifiedAuth, async (req, res) => {
+  try {
+    const county = await prisma.county.findUnique({
+      where: { id: req.user.countyId },
+    });
+    if (!county) {
+      return res.status(404).json({ error: "County not found" });
+    }
+
+    const patterns = await prisma.errorPattern.findMany({
+      where: {
+        stateCode: county.stateCode,
+        patternName: { startsWith: "live_" },
+      },
+      orderBy: { errorRate: "desc" },
+    });
+
+    const formatted = patterns.map((p) => ({
+      id: p.id,
+      pattern: p.patternName.replace("live_", ""),
+      correctionType: p.correctionType,
+      correctionRate: `${(p.errorRate * 100).toFixed(1)}%`,
+      relativeRisk: p.riskWeight,
+      sampleSize: p.totalCasesAnalyzed,
+      corrections: p.occurrenceCount,
+      characteristics: p.characteristics,
+      lastRefreshed: p.lastRefreshed,
+    }));
+
+    res.json({
+      stateCode: county.stateCode,
+      count: formatted.length,
+      patterns: formatted,
+    });
+  } catch (error) {
+    console.error("[LIVE PATTERNS]", error);
+    res.status(500).json({ error: "Failed to load live patterns" });
   }
 });
 

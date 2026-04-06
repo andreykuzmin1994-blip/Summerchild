@@ -18,6 +18,7 @@
 
 const prisma = require("../lib/prisma");
 const { child } = require("./logger");
+const { scoreLivePatterns } = require("./livePatternDetector");
 const log = child("accuracy-assistant");
 
 // Scoring thresholds — cases at or above these scores get flagged
@@ -896,6 +897,20 @@ async function calculatePredictiveScore(intake, calculations, stateCode) {
       score: boost,
       maxScore: 20,
       detail: `${matchedPatterns.length} historical pattern(s) matched`,
+    });
+  }
+
+  // 4. Add live-discovered pattern score
+  const liveResult = await scoreLivePatterns(intake, stateCode);
+  if (liveResult.score > 0) {
+    rawScore += liveResult.score;
+    factors.push({
+      name: "live_discovered_patterns",
+      description: "Data-driven patterns discovered from correction history",
+      score: liveResult.score,
+      maxScore: 25,
+      detail: `${liveResult.matchedPatterns.length} live pattern(s) matched`,
+      matchedPatterns: liveResult.matchedPatterns,
     });
   }
 

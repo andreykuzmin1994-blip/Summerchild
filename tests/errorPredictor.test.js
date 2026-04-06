@@ -12,6 +12,19 @@ import { createRequire } from "module";
 const require_ = createRequire(import.meta.url);
 const prismaPath = require_.resolve("../src/lib/prisma");
 
+// Mock livePatternDetector BEFORE errorPredictor loads it
+const liveDetectorPath = require_.resolve("../src/services/livePatternDetector");
+require_.cache[liveDetectorPath] = {
+  id: liveDetectorPath,
+  filename: liveDetectorPath,
+  loaded: true,
+  exports: {
+    scoreLivePatterns: () => Promise.resolve({ score: 0, matchedPatterns: [], featureSnapshot: {} }),
+    discoverPatterns: () => Promise.resolve({ patternsDiscovered: 0, patterns: [] }),
+    extractFeatures: () => new Map(),
+  },
+};
+
 require_.cache[prismaPath] = {
   id: prismaPath,
   filename: prismaPath,
