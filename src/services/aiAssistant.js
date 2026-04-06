@@ -1,7 +1,10 @@
 const { PrismaClient } = require("@prisma/client");
-const { aiProvider, PROVIDER_MODELS } = require("./aiProvider");
+const { aiSdkProvider, PROVIDER_MODELS } = require("./aiSdkProvider");
+const { validateAIResponse, formatValidationErrorsForLLM } = require("./aiResponseValidator");
+const { child } = require("./logger");
 
 const prisma = new PrismaClient();
+const healLog = child("self-healing");
 
 // Model tier names used for provider-agnostic routing
 const MODEL_TIERS = {
@@ -11,6 +14,9 @@ const MODEL_TIERS = {
 
 // Keep MODELS export for backward compatibility (maps to primary provider)
 const MODELS = PROVIDER_MODELS.anthropic;
+
+// Maximum self-healing retry attempts per data block
+const MAX_HEAL_RETRIES = 2;
 
 // Keywords that trigger Sonnet (complex Q&A)
 const COMPLEX_KEYWORDS = [
@@ -155,6 +161,11 @@ function selectModel(userMessage) {
 /**
  * Send a message to the AI provider with automatic failover.
  * Tries Claude first; if Claude is down, falls back to OpenAI.
+ *
+ * Includes self-healing validation: when extracted data blocks fail Zod
+ * validation, the errors are fed back to the LLM so it can correct its
+ * output (Instructor-style retry pattern). This runs up to MAX_HEAL_RETRIES
+ * times per failed block.
  */
 async function sendMessage(conversationHistory, systemPrompt, userMessage, sessionToken) {
   const modelTier = selectModel(userMessage);
@@ -164,23 +175,40 @@ async function sendMessage(conversationHistory, systemPrompt, userMessage, sessi
     { role: "user", content: userMessage },
   ];
 
-  // Hash session token for non-identifying metadata
-  const crypto = require("crypto");
-  const hashedSession = sessionToken
-    ? crypto.createHash("sha256").update(sessionToken).digest("hex").slice(0, 16)
-    : undefined;
-
-  const result = await aiProvider.sendMessage(
+  const result = await aiSdkProvider.sendMessage(
     systemPrompt,
     messages,
     modelTier,
-    hashedSession
   );
 
   const assistantMessage = result.text;
 
   // Extract structured data from the hidden block
-  const extractedData = extractStructuredData(assistantMessage);
+  let extractedData = extractStructuredData(assistantMessage);
+
+  // ── Self-healing validation ───────────────────────────────────────
+  // For each extracted block, run Zod validation. If it fails, ask the
+  // LLM to fix its output by sending the errors back as a follow-up.
+  // This is the "Instructor pattern" — reask with validation context.
+  const healedData = [];
+  const failedBlocks = [];
+
+  for (const block of extractedData) {
+    const zodResult = validateAIResponse(block);
+    if (zodResult.valid) {
+      healedData.push(block);
+    } else {
+      failedBlocks.push({ block, errors: zodResult.errors });
+    }
+  }
+
+  // Attempt to heal failed blocks by re-asking the LLM
+  if (failedBlocks.length > 0) {
+    const healed = await _healFailedBlocks(
+      failedBlocks, systemPrompt, messages, assistantMessage, modelTier
+    );
+    healedData.push(...healed);
+  }
 
   // Strip the hidden block from the display message
   const displayMessage = assistantMessage.replace(/<!--CUSHION_DATA:.*?-->/g, "").trim();
@@ -190,9 +218,98 @@ async function sendMessage(conversationHistory, systemPrompt, userMessage, sessi
     provider: result.provider,
     displayMessage,
     rawMessage: assistantMessage,
-    extractedData,
+    extractedData: healedData,
     usage: result.usage,
   };
+}
+
+/**
+ * Self-healing: re-ask the LLM to fix data blocks that failed Zod validation.
+ *
+ * Sends a focused correction request with the specific validation errors,
+ * then re-extracts and re-validates. Retries up to MAX_HEAL_RETRIES times.
+ *
+ * @returns {Object[]} Successfully healed data blocks (may be empty)
+ */
+async function _healFailedBlocks(failedBlocks, systemPrompt, originalMessages, assistantMessage, modelTier) {
+  const healed = [];
+
+  for (const { block, errors } of failedBlocks) {
+    let lastErrors = errors;
+    let lastBlock = block;
+    let fixed = false;
+
+    for (let attempt = 1; attempt <= MAX_HEAL_RETRIES; attempt++) {
+      const correctionPrompt = formatValidationErrorsForLLM(lastBlock, lastErrors);
+
+      healLog.info("Self-healing attempt", {
+        field: lastBlock.field,
+        attempt,
+        errors: lastErrors,
+      });
+
+      try {
+        // Send a focused correction message — include the original assistant
+        // response for context, then ask for a fix
+        const healMessages = [
+          ...originalMessages,
+          { role: "assistant", content: assistantMessage },
+          { role: "user", content: correctionPrompt },
+        ];
+
+        const healResult = await aiSdkProvider.sendMessage(
+          systemPrompt,
+          healMessages,
+          modelTier,
+        );
+
+        // Extract the corrected data block
+        const correctedBlocks = extractStructuredData(healResult.text);
+        const correctedBlock = correctedBlocks.find((b) => b.field === lastBlock.field);
+
+        if (!correctedBlock) {
+          healLog.warn("Self-healing: LLM did not return a corrected block", {
+            field: lastBlock.field,
+            attempt,
+          });
+          break; // No point retrying if the LLM didn't produce the right field
+        }
+
+        // Re-validate the corrected block
+        const revalidation = validateAIResponse(correctedBlock);
+        if (revalidation.valid) {
+          healLog.info("Self-healing succeeded", {
+            field: lastBlock.field,
+            attempt,
+          });
+          healed.push(correctedBlock);
+          fixed = true;
+          break;
+        }
+
+        // Still invalid — update for next retry
+        lastErrors = revalidation.errors;
+        lastBlock = correctedBlock;
+      } catch (healError) {
+        healLog.warn("Self-healing API call failed", {
+          field: lastBlock.field,
+          attempt,
+          error: healError.message,
+        });
+        break; // Don't waste retries on API failures
+      }
+    }
+
+    if (!fixed) {
+      healLog.warn("Self-healing exhausted retries, dropping block", {
+        field: block.field,
+        finalErrors: lastErrors,
+      });
+      // Block is dropped — the intake route already logs Zod failures
+    }
+  }
+
+  return healed;
 }
 
 /**

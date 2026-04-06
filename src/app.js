@@ -96,10 +96,10 @@ app.get("/api/health", async (req, res) => {
 
 // AI provider health check (shows active provider, circuit breaker state, failover log, metrics)
 app.get("/api/health/ai", async (req, res) => {
-  const { aiProvider } = require("./services/aiProvider");
-  const status = await aiProvider.healthCheck();
-  status.recentFailovers = aiProvider.getFailoverLog();
-  status.metrics = aiProvider.getMetrics();
+  const { aiSdkProvider } = require("./services/aiSdkProvider");
+  const status = await aiSdkProvider.healthCheck();
+  status.recentFailovers = aiSdkProvider.getFailoverLog();
+  status.metrics = aiSdkProvider.getMetrics();
   res.json(status);
 });
 

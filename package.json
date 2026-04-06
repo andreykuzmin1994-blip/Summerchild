@@ -19,8 +19,11 @@
     "client:build": "cd client && npm run build"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.66",
+    "@ai-sdk/openai": "^3.0.50",
     "@anthropic-ai/sdk": "^0.39.0",
     "@prisma/client": "^6.4.0",
+    "ai": "^6.0.146",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.21.0",

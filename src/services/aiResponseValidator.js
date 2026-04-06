@@ -178,8 +178,29 @@ function validateAIResponse(dataBlock) {
   return { valid: false, errors };
 }
 
+/**
+ * Format Zod validation errors into a human-readable string that can be
+ * fed back to the LLM for self-healing.
+ *
+ * @param {Object} dataBlock - The original data block that failed validation
+ * @param {string[]} errors - Array of "path: message" error strings
+ * @returns {string} A prompt fragment describing what went wrong
+ */
+function formatValidationErrorsForLLM(dataBlock, errors) {
+  return [
+    `The structured data block you produced has validation errors:`,
+    `Original data: ${JSON.stringify(dataBlock)}`,
+    `Errors:`,
+    ...errors.map((e) => `  - ${e}`),
+    ``,
+    `Please re-output this data block as a corrected <!--CUSHION_DATA:{...}--> tag.`,
+    `Fix ONLY the errors listed above. Keep all other fields the same.`,
+  ].join("\n");
+}
+
 module.exports = {
   validateAIResponse,
+  formatValidationErrorsForLLM,
   SCHEMA_MAP,
   // Export individual schemas for testing
   HouseholdMemberSchema,
