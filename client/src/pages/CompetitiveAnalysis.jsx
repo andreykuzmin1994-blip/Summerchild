@@ -62,6 +62,36 @@ const competitors = [
     ],
   },
   {
+    name: "Servos",
+    type: "Primary Competitor",
+    highlight: false,
+    founded: "2019",
+    structure: "Private (Servos LLC)",
+    headcount: "51-200",
+    focus: "Public sector benefits eligibility on ServiceNow",
+    approach: "Conversational AI intake + rules engine on ServiceNow PSDS",
+    target: "State & local HHS agencies",
+    deployment: "ServiceNow cloud platform (SaaS)",
+    aiCapability: "Strong — conversational AI intake with hybrid rules engine; screens 40+ programs in one session",
+    snapDepth: "Broad — covers SNAP alongside Medicaid, TANF, CHIP, LIHEAP, etc.; breadth over depth",
+    piiHandling: "Standard enterprise (ServiceNow platform compliance)",
+    pricing: "ServiceNow licensing + Servos implementation; enterprise-scale pricing",
+    strengths: [
+      "Conversational AI eligibility across 40+ programs simultaneously",
+      "First & only ServiceNow Elite Partner with PSDS certification",
+      "No-code policy updates — agencies adjust rules without developers",
+      "Hybrid AI + rules engine approach appeals to risk-averse buyers",
+      "ServiceNow enterprise trust (security, scalability, audit trails)",
+    ],
+    weaknesses: [
+      "Platform lock-in to ServiceNow — agencies must buy ServiceNow licenses",
+      "Breadth over depth — 40+ programs means less SNAP-specific optimization",
+      "Enterprise pricing puts it out of reach for small counties",
+      "Rules engine approach lacks the deep AI anomaly detection we offer",
+      "No zero-PII architecture — collects and stores applicant data",
+    ],
+  },
+  {
     name: "Code for America",
     type: "Adjacent",
     highlight: false,
@@ -234,7 +264,7 @@ export default function CompetitiveAnalysis() {
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Competitive Landscape</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Nava PBC and the broader govtech benefits delivery market — updated April 2026
+              Nava PBC, Servos, and the broader govtech benefits delivery market — updated April 2026
             </p>
           </div>
 
@@ -298,7 +328,7 @@ export default function CompetitiveAnalysis() {
             <div className="bg-white border border-green-200 rounded-lg p-5">
               <h4 className="font-bold text-green-800 mb-2">Our Advantages</h4>
               <ul className="text-sm text-gray-700 space-y-2">
-                <li><span className="font-medium text-green-700">AI-native intake:</span> No competitor has conversational AI that collects financial data, calculates eligibility, and flags anomalies in one flow.</li>
+                <li><span className="font-medium text-green-700">AI-native intake:</span> Servos has conversational AI but uses a rules engine — we use LLM-driven conversation with deep anomaly detection, a fundamentally more adaptive approach.</li>
                 <li><span className="font-medium text-green-700">Zero-PII architecture:</span> Dramatically simplifies compliance and security review — a unique selling point for risk-averse county IT.</li>
                 <li><span className="font-medium text-green-700">County-level entry:</span> We can deploy without state-level procurement. Nava and Deloitte can't economically pursue individual counties.</li>
                 <li><span className="font-medium text-green-700">Speed to value:</span> Weeks to pilot, not months of consulting. County directors see results fast.</li>
@@ -307,10 +337,11 @@ export default function CompetitiveAnalysis() {
             <div className="bg-white border border-red-200 rounded-lg p-5">
               <h4 className="font-bold text-red-800 mb-2">Key Risks</h4>
               <ul className="text-sm text-gray-700 space-y-2">
+                <li><span className="font-medium text-red-700">Servos overlap:</span> Most direct competitor — conversational AI + eligibility on an enterprise platform. If a state already runs ServiceNow, Servos is an easy add.</li>
                 <li><span className="font-medium text-red-700">Nava + Beam:</span> If Beam adds AI intake features and Nava bundles it with state contracts, they could block our county-up strategy.</li>
-                <li><span className="font-medium text-red-700">State mandates:</span> A state choosing Nava/Deloitte for a statewide system could dictate county tooling, locking us out.</li>
-                <li><span className="font-medium text-red-700">Scale gap:</span> 600+ staff vs. our small team. Concurrent multi-county deployments will strain resources.</li>
-                <li><span className="font-medium text-red-700">Credibility gap:</span> No HealthCare.gov story. Pilot results are essential to build trust.</li>
+                <li><span className="font-medium text-red-700">State mandates:</span> A state choosing Nava/Deloitte/Servos for a statewide system could dictate county tooling, locking us out.</li>
+                <li><span className="font-medium text-red-700">Scale gap:</span> Nava (600+), Servos (100+) vs. our small team. Concurrent multi-county deployments will strain resources.</li>
+                <li><span className="font-medium text-red-700">Credibility gap:</span> No HealthCare.gov story or ServiceNow certification. Pilot results are essential to build trust.</li>
               </ul>
             </div>
             <div className="bg-white border border-cushion-200 rounded-lg p-5">
@@ -319,7 +350,8 @@ export default function CompetitiveAnalysis() {
                 <li><span className="font-medium text-cushion-700">1. Win the GA pilot:</span> Measurable results (time saved, accuracy, expedited cases caught) become our credibility story.</li>
                 <li><span className="font-medium text-cushion-700">2. Stay SNAP-deep:</span> Resist the urge to go broad. Depth beats breadth at this stage.</li>
                 <li><span className="font-medium text-cushion-700">3. County relationships:</span> Build direct relationships that top-down consultancies can't easily replicate.</li>
-                <li><span className="font-medium text-cushion-700">4. Watch Beam closely:</span> Monitor Nava's Beam roadmap for AI intake features — that's the trigger to accelerate.</li>
+                <li><span className="font-medium text-cushion-700">4. Differentiate vs. Servos:</span> They screen 40+ programs broadly; we go deep on SNAP accuracy and overpayment detection. Lean into depth and zero-PII as the wedge.</li>
+                <li><span className="font-medium text-cushion-700">5. Watch Beam closely:</span> Monitor Nava's Beam roadmap for AI intake features — that's the trigger to accelerate.</li>
               </ul>
             </div>
           </section>
