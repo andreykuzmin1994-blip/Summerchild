@@ -80,14 +80,14 @@ Income Counting Rules [7 CFR § 273.9]:
 - SNAP monthly conversion: weekly × 4.333, biweekly × 2.167, semi-monthly × 2, monthly × 1 [§ 273.10(c)]
 
 Deduction Rules [7 CFR § 273.9(d)]:
-- Standard deduction: varies by household size (see table above) [§ 273.9(d)(1)]
-- 20% earned income deduction: applies only to earned income [§ 273.9(d)(2)]
-- Dependent care: actual amount, only if tied to work or training [§ 273.9(d)(4)]
-- Medical expenses for elderly/disabled: amount over $35/month, or $161 standard if > $35 [§ 273.9(d)(3)]
-- Legally owed child support paid out [§ 273.9(d)(5)]
-- Shelter excess: total shelter - 50% of income after other deductions (capped at $744 unless elderly/disabled in household) [§ 273.9(d)(6)]
+- Standard deduction: varies by household size (see table above) [§ 273.9(d)(2)]
+- 20% earned income deduction: applies only to earned income [§ 273.9(d)(1)]
+- Dependent care: actual amount, only if tied to work or training [§ 273.9(d)(3)]
+- Medical expenses for elderly/disabled: amount over $35/month, or $161 standard if > $35 [§ 273.9(d)(6)]
+- Legally owed child support paid out [§ 273.9(d)(4)]
+- Shelter excess: total shelter - 50% of income after other deductions (capped at $744 unless elderly/disabled in household) [§ 273.9(d)(5)]
 
-Standard Utility Allowances (Georgia FY2026) [7 CFR § 273.9(d)(6)(iii)]:
+Standard Utility Allowances (Georgia FY2026) [7 CFR § 273.9(d)(5)(iii)]:
 - Heating/Cooling: $414
 - Basic utility: $284
 - Phone only: $55
