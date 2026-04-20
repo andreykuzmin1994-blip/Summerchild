@@ -28,6 +28,18 @@ Guidance for Claude Code working in this repository. Cushion Gov is a SNAP-intak
 - Secrets (`JWT_SECRET`, `ANTHROPIC_API_KEY`, etc.) are validated at startup. Do not loosen those checks.
 - Every new security-relevant branch needs a negative test (authz bypass, injection, rate-limit) in `tests/`.
 
+## Compliance Source of Truth
+
+`docs/SECURITY_REGULATIONS.md` is the authoritative list of regulatory scope (NIST 800-53, 800-171, FedRAMP, FISMA, FNS 101, CIS IG1) and the control-family posture/backlog.
+
+Before editing any file touching authentication, authorization, cryptography, logging, PII handling, data retention, network boundaries, dependency management, or incident response:
+
+1. Read the relevant section of `docs/SECURITY_REGULATIONS.md`.
+2. Confirm the change does not regress an OK control.
+3. If the change alters posture (new evidence, closed gap, new gap introduced), update the Status/Evidence row in the **same commit**.
+4. If a backlog item is delivered, move it out of §3 and flip the §2 row to OK.
+5. If a new regulatory regime applies (new state, new data type, new integration), add it to §1 before code lands.
+
 ## Implementation Agent Stack
 
 When the user asks for non-trivial changes (security fixes, auth/authz, crypto, data handling), use this three-role workflow instead of jumping straight to edits:
