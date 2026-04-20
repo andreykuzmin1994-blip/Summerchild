@@ -28,6 +28,11 @@ describe("DialogRailEngine", () => {
 
     it("blocks backward transitions", () => {
       engine.transition("HOUSEHOLD");
+      // INCOME requires household_member in collectedFields — seed it so the
+      // forward transition actually happens. Without this, transition("INCOME")
+      // silently rejects and currentSection stays at HOUSEHOLD, which makes
+      // the next transition("HOUSEHOLD") a no-op instead of a backward step.
+      engine.collectedFields.set("household_member", 2);
       engine.transition("INCOME");
       const result = engine.transition("HOUSEHOLD");
       expect(result.allowed).toBe(false);
@@ -51,6 +56,7 @@ describe("DialogRailEngine", () => {
 
     it("tracks section history", () => {
       engine.transition("HOUSEHOLD");
+      engine.collectedFields.set("household_member", 2);
       engine.transition("INCOME");
       expect(engine.sectionHistory).toEqual(["WELCOME", "HOUSEHOLD", "INCOME"]);
     });
