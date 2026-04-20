@@ -15,6 +15,7 @@ const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
 const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
+const { encrypt: encryptField } = require("../lib/fieldCrypto");
 const {
   sanitizeForDisplay,
   validateDataBlockCount,
@@ -489,12 +490,13 @@ router.post("/start", requireStaffPin, staffPinLimiter, injectionGuardMiddleware
     session.turnNumber = 1;
     await sessionStore.set(sessionToken, session);
 
-    // Log the conversation turn
+    // Log the conversation turn. NIST SC-28: content is AES-256-GCM
+    // encrypted at rest, with intakeId bound as AAD. See src/lib/fieldCrypto.js.
     await withRetry(
       () => prisma.conversationLog.createMany({
         data: [
-          { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: `Intake session started — ${displayName} (${queueNumber})` },
-          { intakeId: intake.id, turnNumber: 1, role: "ASSISTANT", content: welcomeResponse.displayMessage },
+          { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: encryptField(`Intake session started — ${displayName} (${queueNumber})`, intake.id) },
+          { intakeId: intake.id, turnNumber: 1, role: "ASSISTANT", content: encryptField(welcomeResponse.displayMessage, intake.id) },
         ],
       }),
       { context: "conversationLog.create", correlationId: req.correlationId }
@@ -800,12 +802,17 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       }
     }
 
-    // Log conversation turns (sanitize user input to prevent stored XSS in caseworker dashboard)
+    // Log conversation turns. Ordering matters:
+    //   1. sanitizeForDisplay escapes HTML to prevent stored XSS in the
+    //      caseworker dashboard (DO NOT remove — the dashboard renders
+    //      plaintext back and relies on these rows being pre-escaped).
+    //   2. encryptField then AES-256-GCM encrypts the sanitized form.
+    // The plaintext seen at decrypt time is the HTML-escaped string.
     await withRetry(
       () => prisma.conversationLog.createMany({
         data: [
-          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: sanitizeForDisplay(message) },
-          { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: aiResponse.displayMessage },
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: encryptField(sanitizeForDisplay(message), intake.id) },
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: encryptField(aiResponse.displayMessage, intake.id) },
         ],
       }),
       { context: "conversationLog.create", correlationId: req.correlationId }
