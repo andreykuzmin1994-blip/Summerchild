@@ -41,7 +41,7 @@ Legend: **OK** = implemented and tested · **PARTIAL** = implemented but gaps re
 | AC-3 Least privilege | OK | `requireVerifiedAuth` + `requireRole` in `src/middleware/auth.js:138-181`; mandatory `countyId` scoping on intake queries. |
 | AC-5 Separation of duties | OK | Admin-only role escalation and stats endpoints. |
 | AC-6 Least privilege per role | OK | AUDITOR read-only role in `prisma/schema.prisma:241-246`. |
-| AC-7 Unsuccessful logon attempts | **TODO** | No `loginFailedCount` / `lockedUntil` on Caseworker; login endpoint `src/routes/caseworker.js:54-99` never increments a counter. |
+| AC-7 Unsuccessful logon attempts | OK | Lockout after 5 failed logins × 30 min in `src/routes/caseworker.js` (`loginHandler`) using pure helpers in `src/services/loginLockout.js`. `Caseworker.loginFailedCount` + `lockedUntil` columns (`prisma/schema.prisma`). Timing-parity bcrypt on locked path. Admin password reset clears lock state. Negative tests in `tests/caseworkerLockout.test.js`. Residual: no-user-path bcrypt skip remains a timing oracle (pre-existing, tracked separately); targeted-DoS lockout griefing mitigated by IP-side `authLimiter` + admin password-reset unlock path. |
 | AC-11 Session lock / idle timeout | **TODO** | Only an 8h absolute token TTL; no idle timeout. |
 | AC-12 Session termination | **TODO** | No concurrent session cap; `src/services/sessionStore.js` has no per-user cardinality check. |
 | AC-17 Remote access | OPS | TLS + IP allowlist via `src/middleware/ipAllowlist.js`. Deployment-enforced VPN ranges. |
@@ -54,7 +54,7 @@ Legend: **OK** = implemented and tested · **PARTIAL** = implemented but gaps re
 | IA-2(2) MFA for non-privileged | **TODO** | Same. |
 | IA-4 Identifier management | OK | Unique email constraint; county-scoped IDs. |
 | IA-5(1) Password-based auth | OK | bcrypt cost 12 (`src/middleware/auth.js:105`); ≥12 chars + complexity (`src/routes/caseworker.js:23-35`); common-password blocklist. |
-| IA-5 Reset flow | PARTIAL | Admin can reset password directly; no email OTP confirmation (`src/routes/caseworker.js:515-550`). |
+| IA-5 Reset flow | PARTIAL | Admin can reset password directly; no email OTP confirmation (`src/routes/caseworker.js` `/users/:id/reset-password`). Reset also clears AC-7 lock state (`loginFailedCount`, `lockedUntil`) so rescued users are not still locked out. Email OTP remains **TODO**. |
 | IA-11 Re-authentication | **TODO** | No re-auth required for sensitive actions (role changes, exports). |
 
 ### Audit & Accountability (AU) — 800-53 AU / 800-171 §3.3
@@ -152,18 +152,18 @@ OPS. Not addressed by this codebase.
 
 Ordered by priority. Each item should be delivered as its own PR on a `claude/<topic>-<id>` branch using the Coder/Reviewer/Implementer stack in CLAUDE.md.
 
-1. **Account lockout (AC-7, IA-5)** — Add `loginFailedCount` + `lockedUntil` to Caseworker; lock after 5 failures × 30 min; reset on success; negative test in `tests/`.
-2. **Concurrent session cap + idle timeout (AC-11, AC-12)** — Per-user max-1 active session; 30-min idle; revoke sessions on deactivation.
-3. **MFA for caseworker accounts (IA-2(1), IA-2(2))** — TOTP via `speakeasy`, secret encrypted with `fieldCrypto`; enrollment + recovery codes; gate privileged actions.
-4. **Password-reset email OTP (IA-5)** — Async email OTP before `hashPassword()` in admin reset flow.
-5. **`npm audit` + Dependabot in CI (SI-2, RA-5, CM-8)** — Fail build on high/critical; generate SBOM (CycloneDX); weekly dep-update PRs.
-6. **Audit-log retention enforcement (AU-11)** — Scheduled job prunes beyond `CONVERSATION_LOG_RETENTION_DAYS`; emits audit event on prune.
-7. **Alerting hook interface (AU-5, IR-6, SI-4)** — Pluggable sink (PagerDuty/CloudWatch) for INJECTION_BLOCKED/CSRF_BLOCKED/LOGIN_FAILED spikes.
-8. **KMS envelope encryption (SC-12, SC-28)** — Replace static env keys with KMS-wrapped DEKs; rotation without redeploy.
-9. **Session memory zeroization (MP-6)** — Overwrite session objects before cleanup.
-10. **Continuous self-assessment (CA-7)** — Scripted run that tests each implemented control and emits a JSON report to `docs/compliance/`.
-11. **Risk register + pen-test cadence (RA-3, CA-8)** — Markdown risk register; documented annual pen-test.
-12. **Re-authentication for sensitive actions (IA-11)** — Require password re-entry for role change, data export, admin reset.
+1. **Concurrent session cap + idle timeout (AC-11, AC-12)** — Per-user max-1 active session; 30-min idle; revoke sessions on deactivation. Reference: login.gov `unique_session_id` + Devise `timeout_in`; Keycloak `ssoSessionIdleTimeout`.
+2. **MFA for caseworker accounts (IA-2(1), IA-2(2))** — TOTP via `otplib` or WebAuthn via `@simplewebauthn/server`; secret encrypted with `fieldCrypto`; enrollment + recovery codes; gate privileged actions. **When this lands, the AC-7 counter reset in `loginHandler` MUST move post-MFA** — otherwise a valid password alone wipes the counter.
+3. **Password-reset email OTP (IA-5)** — Async email OTP before `hashPassword()` in admin reset flow. Hash the token at rest (SHA-256), single-use, ≤15-min TTL. Reference: Devise `:recoverable` (post-CVE-2019-16109).
+4. **`npm audit` + Dependabot + SBOM in CI (SI-2, RA-5, CM-8)** — Fail build on high/critical (`npm audit --omit=dev`); CycloneDX SBOM via `@cyclonedx/cyclonedx-npm` after clean `npm ci`; Dependabot PRs.
+5. **Audit-log retention enforcement (AU-11)** — Scheduled job prunes beyond `CONVERSATION_LOG_RETENTION_DAYS`; emits audit event on prune. Long-term: S3 lifecycle / OpenSearch ISM at the storage layer.
+6. **Alerting hook interface (AU-5, IR-6, SI-4)** — Pluggable sink (PagerDuty/CloudWatch) for INJECTION_BLOCKED/CSRF_BLOCKED/LOGIN_FAILED/ACCOUNT_LOCKED spikes. Bounded queue + drop-with-metric; dedup. Reference: Keycloak `EventListenerProvider` SPI.
+7. **KMS envelope encryption (SC-12, SC-28)** — Replace static env keys with KMS-wrapped DEKs; rotation without redeploy. Prefer AWS Encryption SDK for JS or Google Tink over hand-rolled AES-GCM with static key IDs.
+8. **Session memory zeroization (MP-6)** — Overwrite session objects before cleanup. Use `Buffer` (not `String`) for PII in transit; document the V8 `String` zeroization limitation in the SSP.
+9. **Continuous self-assessment (CA-7)** — Scripted run that tests each implemented control and emits an OSCAL Assessment Results (AR) JSON report to `docs/compliance/`. Use the NIST OSCAL schema or `compliance-trestle`; avoid bespoke report formats (FedRAMP is converging on OSCAL).
+10. **Risk register + pen-test cadence (RA-3, CA-8)** — YAML risk register in-repo (CODEOWNERS-gated) with id/likelihood/impact/mitigation/owner/review-date; documented annual pen-test + pre-major-change test.
+11. **Re-authentication for sensitive actions (IA-11)** — Require second-factor re-entry for role change, data export, admin reset. Enforce in middleware (`requireRecentAuth(maxAgeSeconds)`), not just UI. Validate return URLs (no open-redirect).
+12. **No-user-path bcrypt timing oracle** — Pre-existing: `loginHandler` short-circuits on unknown email without running bcrypt, producing a timing oracle for email enumeration. Fix: always run bcrypt against a fixed dummy hash when no user is found. (Discovered during AC-7 delivery; tracked here rather than as a silent fix.)
 
 ---
 

@@ -1,6 +1,6 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
-const { requireVerifiedAuth, requireRole, generateToken, comparePassword, hashPassword } = require("../middleware/auth");
+const { requireAuth, requireVerifiedAuth, requireRole, generateToken, comparePassword, hashPassword } = require("../middleware/auth");
 const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { calculateFullEligibility } = require("../services/snapCalculator");
@@ -9,6 +9,12 @@ const { refreshErrorPatterns, getAccuracyStats } = require("../services/errorPre
 const { buildAuthCookieOptions } = require("../lib/cookies");
 const { csrfProtection } = require("../middleware/csrfProtection");
 const { safeDecrypt } = require("../lib/fieldCrypto");
+const {
+  isAccountLocked,
+  hasExpiredLock,
+  reachedLockThreshold,
+  computeLockExpiry,
+} = require("../services/loginLockout");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -50,8 +56,23 @@ function rolesActorMayAssign(actorRole) {
 
 /**
  * POST /api/caseworker/login
+ *
+ * NIST AC-7 / IA-5 account lockout: after MAX_FAILED_LOGINS bad attempts the
+ * account is locked for LOCKOUT_DURATION_MS (see src/services/loginLockout.js).
+ *
+ * Response invariants (enumeration + timing defense):
+ *  - Unknown email, deactivated account, locked account, and bad password
+ *    all return the same {status: 401, error: "Invalid credentials"}.
+ *  - A locked account still triggers bcrypt.compare so the locked vs.
+ *    wrong-password latency is indistinguishable to an unauthenticated caller.
+ *  - MFA is not yet implemented (backlog item #3). When it lands, the
+ *    successful-password counter reset MUST move post-MFA — otherwise an
+ *    attacker with a valid password can wipe the counter without completing
+ *    the second factor (login.gov pattern).
  */
-router.post("/login", authLimiter, async (req, res) => {
+router.post("/login", authLimiter, loginHandler);
+
+async function loginHandler(req, res) {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -63,41 +84,101 @@ router.post("/login", authLimiter, async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    const now = new Date();
+    const locked = isAccountLocked(caseworker, now);
+    const staleLock = hasExpiredLock(caseworker, now);
+
+    // Always run bcrypt.compare — even on a locked account — to hide the
+    // lock state behind the same ~300ms credential-check latency a wrong
+    // password produces. Burns CPU on a locked-out attacker (bounded by
+    // authLimiter: 10 req / 15 min / IP).
     const valid = await comparePassword(password, caseworker.password);
-    if (!valid) {
+
+    if (locked) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const token = generateToken(caseworker);
+    if (valid) {
+      // Unconditional reset — handles "counter > 0 but under threshold"
+      // and "stale lock expired" transitions in one write.
+      if (caseworker.loginFailedCount > 0 || caseworker.lockedUntil) {
+        await prisma.caseworker.update({
+          where: { id: caseworker.id },
+          data: { loginFailedCount: 0, lockedUntil: null },
+        });
+      }
+
+      const token = generateToken(caseworker);
+
+      await logAuditEvent({
+        type: EVENTS.CASEWORKER_LOGIN,
+        actorType: ACTORS.CASEWORKER,
+        actorId: caseworker.id,
+        countyId: caseworker.countyId,
+        ip: req.ip,
+      });
+
+      res.cookie("token", token, buildAuthCookieOptions({
+        maxAge: 8 * 60 * 60 * 1000, // 8 hours
+      }));
+
+      return res.json({
+        token,
+        caseworker: {
+          id: caseworker.id,
+          name: caseworker.name,
+          email: caseworker.email,
+          role: caseworker.role,
+        },
+      });
+    }
+
+    // Bad password. If the previous lock had expired, reset + start a fresh
+    // window at count=1. Otherwise atomic increment to avoid the lost-update
+    // race across concurrent failed attempts.
+    const updated = staleLock
+      ? await prisma.caseworker.update({
+          where: { id: caseworker.id },
+          data: { loginFailedCount: 1, lockedUntil: null },
+          select: { loginFailedCount: true },
+        })
+      : await prisma.caseworker.update({
+          where: { id: caseworker.id },
+          data: { loginFailedCount: { increment: 1 } },
+          select: { loginFailedCount: true },
+        });
 
     await logAuditEvent({
-      type: EVENTS.CASEWORKER_LOGIN,
+      type: EVENTS.CASEWORKER_LOGIN_FAILED,
       actorType: ACTORS.CASEWORKER,
       actorId: caseworker.id,
       countyId: caseworker.countyId,
       ip: req.ip,
+      details: { attemptCount: updated.loginFailedCount },
     });
 
-    // Set JWT as httpOnly cookie (XSS-safe — not accessible via JavaScript).
-    // Secure flag is on by default; see src/lib/cookies.js for policy.
-    res.cookie("token", token, buildAuthCookieOptions({
-      maxAge: 8 * 60 * 60 * 1000, // 8 hours
-    }));
+    if (reachedLockThreshold(updated.loginFailedCount)) {
+      const lockedUntil = computeLockExpiry(new Date());
+      await prisma.caseworker.update({
+        where: { id: caseworker.id },
+        data: { lockedUntil },
+      });
+      await logAuditEvent({
+        type: EVENTS.CASEWORKER_ACCOUNT_LOCKED,
+        actorType: ACTORS.SYSTEM,
+        actorId: caseworker.id,
+        countyId: caseworker.countyId,
+        ip: req.ip,
+        details: { lockedUntil: lockedUntil.toISOString() },
+      });
+    }
 
-    res.json({
-      token,
-      caseworker: {
-        id: caseworker.id,
-        name: caseworker.name,
-        email: caseworker.email,
-        role: caseworker.role,
-      },
-    });
+    return res.status(401).json({ error: "Invalid credentials" });
   } catch (error) {
     console.error("[CASEWORKER LOGIN]", error);
-    res.status(500).json({ error: "Login failed" });
+    return res.status(500).json({ error: "Login failed" });
   }
-});
+}
 
 /**
  * GET /api/caseworker/dashboard
@@ -528,9 +609,12 @@ router.post("/users/:id/reset-password", requireVerifiedAuth, requireRole("ADMIN
     }
 
     const hashed = await hashPassword(newPassword);
+    // NIST AC-7: clear lockout state alongside the password reset. Without
+    // this, a locked user stays locked for up to LOCKOUT_DURATION_MS after
+    // an admin rescues them — defeating the rescue path.
     await prisma.caseworker.update({
       where: { id: req.params.id },
-      data: { password: hashed },
+      data: { password: hashed, loginFailedCount: 0, lockedUntil: null },
     });
 
     await logAuditEvent({
@@ -539,7 +623,7 @@ router.post("/users/:id/reset-password", requireVerifiedAuth, requireRole("ADMIN
       actorId: req.user.id,
       countyId: req.user.countyId,
       ip: req.ip,
-      details: { targetUserId: target.id, action: "password_reset" },
+      details: { targetUserId: target.id, action: "password_reset_and_unlock" },
     });
 
     res.json({ message: "Password reset successfully" });
@@ -724,3 +808,4 @@ router.get("/accuracy/review-queue", requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.loginHandler = loginHandler;
