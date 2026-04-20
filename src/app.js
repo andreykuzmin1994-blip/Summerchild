@@ -7,6 +7,7 @@ const { apiLimiter } = require("./middleware/rateLimiter");
 const { ipAllowlistMiddleware } = require("./middleware/ipAllowlist");
 const { validateSystemPrompt } = require("./middleware/systemPromptValidator");
 const { buildSystemPrompt } = require("./services/aiAssistant");
+const { verifyAuditLogImmutability } = require("./services/auditLogger");
 const { correlationMiddleware, requestLogMiddleware, child } = require("./services/logger");
 
 const intakeRoutes = require("./routes/intake");
@@ -16,6 +17,12 @@ const adminRoutes = require("./routes/admin");
 const log = child("app");
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Trust the first proxy hop so req.ip / req.secure / req.protocol reflect
+// the real client (TLS-terminating load balancer, nginx, CloudFront).
+// Required by express-rate-limit for per-IP keying and for helmet HSTS to
+// be meaningful. See NIST 800-53 SC-7 / SC-8.
+app.set("trust proxy", 1);
 
 // Correlation ID + structured request logging (CJIS audit trail support)
 app.use(correlationMiddleware);
@@ -194,12 +201,36 @@ async function startServer() {
       throw new Error("CORS_ORIGIN must not reference localhost in production");
     }
 
+    // Refuse to start in production with insecure cookies enabled (NIST SC-8).
+    if (process.env.NODE_ENV === "production" && process.env.ALLOW_INSECURE_COOKIES === "true") {
+      throw new Error("ALLOW_INSECURE_COOKIES=true is forbidden in production");
+    }
+
     // Validate system prompt contains no PII
     const apiKeyPlaceholder = "sk-ant" + "-...";
     if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !== apiKeyPlaceholder) {
       const systemPrompt = await buildSystemPrompt("GA", 2026);
       validateSystemPrompt(systemPrompt);
       log.info("System prompt validated — no PII detected");
+    }
+
+    // Verify audit log immutability (NIST 800-53 AU-3/AU-6).
+    // Non-blocking: log and continue, but a "mutable" result must be
+    // alerted on immediately. In production we fail startup.
+    if (process.env.NODE_ENV !== "test") {
+      try {
+        const result = await verifyAuditLogImmutability();
+        if (result.status === "mutable") {
+          const msg = "Audit log DELETE is permitted — DB permissions are misconfigured";
+          if (process.env.NODE_ENV === "production") throw new Error(msg);
+          log.error(msg);
+        } else if (result.status === "unknown") {
+          log.warn("Audit log immutability could not be verified", { message: result.message });
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV === "production") throw err;
+        log.warn("Skipping audit immutability check", { error: err.message });
+      }
     }
 
     app.listen(PORT, () => {

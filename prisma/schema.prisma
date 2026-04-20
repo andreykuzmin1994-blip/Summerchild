@@ -242,6 +242,7 @@ enum CaseworkerRole {
   CASEWORKER
   SUPERVISOR
   ADMIN
+  AUDITOR     // NIST AC-5: read-only audit-log access; no user-mgmt, no intake ops
 }
 
 enum CorrectionType {

@@ -64,7 +64,10 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!caseworker.id) { navigate("/login"); return; }
-    if (caseworker.role !== "ADMIN") {
+    // AUDITOR has read-only audit-log access; ADMIN has full access here.
+    // Any other role is redirected. Server-side authz is the source of truth;
+    // this is a UX guard.
+    if (caseworker.role !== "ADMIN" && caseworker.role !== "AUDITOR") {
       navigate("/caseworker/dashboard");
       return;
     }
@@ -470,6 +473,7 @@ export default function AdminDashboard() {
                                 <option value="CASEWORKER">Caseworker</option>
                                 <option value="SUPERVISOR">Supervisor</option>
                                 <option value="ADMIN">Admin</option>
+                                <option value="AUDITOR">Auditor</option>
                               </select>
                             </td>
                             <td className="px-4 py-3 text-gray-500 hidden md:table-cell">
@@ -601,6 +605,7 @@ export default function AdminDashboard() {
                       <option value="CASEWORKER">Caseworker</option>
                       <option value="SUPERVISOR">Supervisor</option>
                       <option value="ADMIN">Admin</option>
+                      <option value="AUDITOR">Auditor</option>
                     </select>
                   </div>
                   <button

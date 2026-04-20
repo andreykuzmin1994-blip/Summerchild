@@ -31,7 +31,7 @@ export default function LoginPage() {
       localStorage.setItem("caseworker", JSON.stringify(data.caseworker));
 
       // Route based on role
-      if (data.caseworker.role === "ADMIN") {
+      if (data.caseworker.role === "ADMIN" || data.caseworker.role === "AUDITOR") {
         navigate("/admin/dashboard");
       } else if (data.caseworker.role === "SUPERVISOR") {
         navigate("/supervisor/dashboard");

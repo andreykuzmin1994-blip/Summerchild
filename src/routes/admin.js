@@ -5,9 +5,14 @@ const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
 
 const { statsCache } = require("../services/queryCache");
+const { csrfProtection } = require("../middleware/csrfProtection");
 
 const prisma = new PrismaClient();
 const router = express.Router();
+
+// CSRF defense — currently admin.js has only GETs, but this future-proofs
+// any added mutations (NIST SC-7).
+router.use(csrfProtection);
 const log = child("admin");
 
 /**
@@ -79,9 +84,16 @@ router.get("/stats", requireVerifiedAuth, requireRole("SUPERVISOR", "ADMIN"), as
 
 /**
  * GET /api/admin/audit-log
- * View audit logs (admin only).
+ * Audit log access — NIST AC-5 separation of duties.
+ *
+ * AUDITOR is the primary role for this capability (read-only audit oversight,
+ * no user-management, no intake ops). ADMIN retained on the allowlist during
+ * transition so existing deployments don't lose access immediately.
+ *
+ * TODO(AC-5): drop "ADMIN" from this list once every county has an AUDITOR
+ * account provisioned. Tracked in compliance backlog.
  */
-router.get("/audit-log", requireVerifiedAuth, requireRole("ADMIN"), async (req, res) => {
+router.get("/audit-log", requireVerifiedAuth, requireRole("ADMIN", "AUDITOR"), async (req, res) => {
   try {
     const { limit = 100, offset = 0, eventType } = req.query;
     const where = { countyId: req.user.countyId };
@@ -96,11 +108,12 @@ router.get("/audit-log", requireVerifiedAuth, requireRole("ADMIN"), async (req, 
 
     const total = await prisma.auditLog.count({ where });
 
-    // Meta-audit: log who accessed the audit logs
+    // Meta-audit: log who accessed the audit logs. Record actor role so
+    // investigators can distinguish AUDITOR from ADMIN reads.
     const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
     await logAuditEvent({
       type: EVENTS.ADMIN_AUDIT_LOG_ACCESSED,
-      actorType: ACTORS.ADMIN,
+      actorType: req.user.role === "AUDITOR" ? ACTORS.AUDITOR : ACTORS.ADMIN,
       actorId: req.user.id,
       countyId: req.user.countyId,
       ip: req.ip,

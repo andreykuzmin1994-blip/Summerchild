@@ -75,8 +75,11 @@ async function requireStaffPin(req, res, next) {
   }
 
   if (matchedHash) {
-    // Record which PIN was used (by hash prefix) for audit trail
-    req.staffPinUsed = matchedHash.slice(0, 8);
+    // Record which PIN was used for audit + per-PIN rate limiting.
+    // Bcrypt hashes begin with a fixed `$2a$12$` prefix (7 chars); slicing
+    // from offset 7 gives 8 chars of actual salt entropy — avoids collisions
+    // across PINs in the rate-limiter key space.
+    req.staffPinUsed = matchedHash.slice(7, 15);
     return next();
   }
 

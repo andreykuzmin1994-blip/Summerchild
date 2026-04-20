@@ -39,24 +39,58 @@ async function logAuditEvent(event) {
 }
 
 /**
- * Verify that audit logs cannot be deleted or modified.
- * Run at startup and periodically to ensure DB permissions are correct.
- * Returns { immutable: boolean, message: string }
+ * Verify that the application DB role cannot DELETE from audit_logs.
+ * NIST 800-53 AU-3/AU-6: audit records must be tamper-evident.
+ *
+ * Uses $executeRaw (tagged template, parameterized) — never $executeRawUnsafe.
+ * The WHERE predicate is a bound parameter that is always false, so even a
+ * permissive DB role cannot lose data through this check.
+ *
+ * Returns { status, immutable, message } where status is:
+ *   - "immutable": DB rejected DELETE with insufficient_privilege (42501) — desired
+ *   - "mutable":   DB accepted the DELETE — SECURITY ALERT
+ *   - "unknown":   other error (connection, missing table, etc.) — requires investigation
  */
-async function verifyAuditLogImmutability() {
+async function verifyAuditLogImmutability(client = prisma) {
+  const alwaysFalse = false;
   try {
-    // Attempt a DELETE — should be blocked by DB permissions
-    await prisma.$executeRawUnsafe(
-      "DELETE FROM audit_logs WHERE 1 = 0"
-    );
-    // If we reach here, DELETE is allowed (bad)
+    await client.$executeRaw`DELETE FROM audit_logs WHERE ${alwaysFalse}`;
     log.error("SECURITY ALERT: Audit log DELETE permission is not restricted");
-    return { immutable: false, message: "Audit logs are NOT immutable — DELETE is permitted" };
-  } catch {
-    // Expected: DELETE should be blocked
-    log.info("Audit log immutability verified — DELETE is restricted");
-    return { immutable: true, message: "Audit logs are immutable" };
+    return {
+      status: "mutable",
+      immutable: false,
+      message: "Audit logs are NOT immutable — DELETE is permitted",
+    };
+  } catch (error) {
+    if (isInsufficientPrivilegeError(error)) {
+      log.info("Audit log immutability verified — DELETE is restricted");
+      return { status: "immutable", immutable: true, message: "Audit logs are immutable" };
+    }
+    // Any other failure (connection, missing table, transaction abort) must
+    // NOT be treated as a successful immutability check.
+    log.warn("Audit log immutability check failed for non-permission reason", {
+      error: error.message,
+      code: error.code,
+    });
+    return {
+      status: "unknown",
+      immutable: false,
+      message: `Could not verify audit log immutability: ${error.message}`,
+    };
   }
+}
+
+/**
+ * Detect Postgres "insufficient_privilege" (SQLSTATE 42501) via Prisma error.
+ * Prisma surfaces raw SQL errors via `error.code` or in `error.meta.code`;
+ * the message text also contains "permission denied" on Postgres.
+ */
+function isInsufficientPrivilegeError(error) {
+  if (!error) return false;
+  const code = error.code || error?.meta?.code;
+  if (code === "42501") return true;
+  const msg = typeof error.message === "string" ? error.message.toLowerCase() : "";
+  return msg.includes("permission denied") || msg.includes("insufficient privilege");
 }
 
 // Event type constants
@@ -81,6 +115,7 @@ const EVENTS = {
   AI_HALLUCINATION_DETECTED: "AI_HALLUCINATION_DETECTED",
   CASEWORKER_REVIEW_CONFIRMED: "CASEWORKER_REVIEW_CONFIRMED",
   FEDERAL_MATCH_CORRECTION: "FEDERAL_MATCH_CORRECTION",
+  CSRF_BLOCKED: "CSRF_BLOCKED",
 };
 
 const ACTORS = {
@@ -88,6 +123,7 @@ const ACTORS = {
   CASEWORKER: "CASEWORKER",
   SYSTEM: "SYSTEM",
   ADMIN: "ADMIN",
+  AUDITOR: "AUDITOR",
 };
 
 module.exports = { logAuditEvent, verifyAuditLogImmutability, EVENTS, ACTORS };
