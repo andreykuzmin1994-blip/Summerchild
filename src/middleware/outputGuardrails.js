@@ -99,15 +99,27 @@ const ON_TOPIC_INDICATORS = [
 ];
 
 function checkOffTopic(aiResponse) {
-  const offTopicHits = OFF_TOPIC_INDICATORS.filter((p) => p.test(aiResponse)).length;
-  const onTopicHits = ON_TOPIC_INDICATORS.filter((p) => p.test(aiResponse)).length;
+  // Count total term-level matches, not patterns matched. A sentence like
+  // "stock market, crypto, bitcoin trading" hits the finance regex four
+  // times but only one distinct pattern — counting patterns lets obvious
+  // off-topic content slip under the threshold.
+  const countMatches = (patterns, text) => {
+    let total = 0;
+    for (const p of patterns) {
+      const m = text.match(new RegExp(p.source, "gi"));
+      if (m) total += m.length;
+    }
+    return total;
+  };
+  const offTopicHits = countMatches(OFF_TOPIC_INDICATORS, aiResponse);
+  const onTopicHits = countMatches(ON_TOPIC_INDICATORS, aiResponse);
 
   // Only flag if multiple off-topic indicators AND no on-topic content
   if (offTopicHits >= 2 && onTopicHits === 0) {
     return {
       passed: false,
       violation: "off_topic",
-      detail: `Response appears off-topic (${offTopicHits} off-topic indicators, 0 on-topic)`,
+      detail: `Response appears off-topic (${offTopicHits} off-topic matches, 0 on-topic)`,
     };
   }
   return { passed: true };
