@@ -6,6 +6,7 @@ const { authLimiter } = require("../middleware/rateLimiter");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { eligibilityCache, statsCache } = require("../services/queryCache");
 const { refreshErrorPatterns, getAccuracyStats } = require("../services/errorPredictor");
+const { buildAuthCookieOptions } = require("../lib/cookies");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -54,13 +55,11 @@ router.post("/login", authLimiter, async (req, res) => {
       ip: req.ip,
     });
 
-    // Set JWT as httpOnly cookie (XSS-safe — not accessible via JavaScript)
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    // Set JWT as httpOnly cookie (XSS-safe — not accessible via JavaScript).
+    // Secure flag is on by default; see src/lib/cookies.js for policy.
+    res.cookie("token", token, buildAuthCookieOptions({
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
-    });
+    }));
 
     res.json({
       token,
