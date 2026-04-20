@@ -123,6 +123,7 @@ const ACTORS = {
   CASEWORKER: "CASEWORKER",
   SYSTEM: "SYSTEM",
   ADMIN: "ADMIN",
+  AUDITOR: "AUDITOR",
 };
 
 module.exports = { logAuditEvent, verifyAuditLogImmutability, EVENTS, ACTORS };
