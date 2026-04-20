@@ -8,6 +8,7 @@ const { eligibilityCache, statsCache } = require("../services/queryCache");
 const { refreshErrorPatterns, getAccuracyStats } = require("../services/errorPredictor");
 const { buildAuthCookieOptions } = require("../lib/cookies");
 const { csrfProtection } = require("../middleware/csrfProtection");
+const { safeDecrypt } = require("../lib/fieldCrypto");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -31,6 +32,20 @@ function validatePasswordComplexity(password) {
   const weak = ["password1234", "admin1234567", "changeme1234", "qwerty123456"];
   if (weak.some((w) => lower.includes(w))) return "Password is too common — please choose a stronger one";
   return null;
+}
+
+// Roles that may be assigned via /register and PUT /users/:id.
+// Keep in sync with CaseworkerRole enum in prisma/schema.prisma.
+const ASSIGNABLE_ROLES = ["CASEWORKER", "SUPERVISOR", "ADMIN", "AUDITOR"];
+
+// NIST AC-5 (Separation of Duties): caps what each actor role may ASSIGN.
+// A SUPERVISOR may only create front-line CASEWORKER accounts. Only an ADMIN
+// can mint privileged accounts (ADMIN, SUPERVISOR, AUDITOR). This closes a
+// privilege-escalation path where a SUPERVISOR could register a shadow ADMIN.
+function rolesActorMayAssign(actorRole) {
+  if (actorRole === "ADMIN") return ASSIGNABLE_ROLES;
+  if (actorRole === "SUPERVISOR") return ["CASEWORKER"];
+  return [];
 }
 
 /**
@@ -205,6 +220,26 @@ router.get("/intake/:id", requireVerifiedAuth, async (req, res) => {
       return res.status(404).json({ error: "Intake not found" });
     }
 
+    // NIST SC-28: decrypt ConversationLog.content for caseworker display.
+    // Legacy (pre-encryption) rows pass through unchanged. Decrypt failures
+    // are surfaced as a sentinel string and recorded in the audit log — the
+    // caseworker sees "[decryption error — logged for investigation]" on
+    // that single turn, not a broken page.
+    if (Array.isArray(intake.conversationLogs)) {
+      for (const log of intake.conversationLogs) {
+        log.content = safeDecrypt(log.content, intake.id, (info) => {
+          logAuditEvent({
+            type: "CONVERSATION_DECRYPT_FAILED",
+            actorType: ACTORS.SYSTEM,
+            actorId: "field-crypto",
+            intakeId: intake.id,
+            countyId: req.user.countyId,
+            details: { logId: log.id, errorName: info.name },
+          }).catch(() => {});
+        });
+      }
+    }
+
     // Run eligibility calculations for the output packet (cached by intake version)
     let eligibility = null;
     if (intake.status !== "IN_PROGRESS") {
@@ -347,6 +382,17 @@ router.post("/register", requireVerifiedAuth, requireRole("ADMIN", "SUPERVISOR")
       return res.status(400).json({ error: "Name, email, and password are required" });
     }
 
+    // Role-assignment SoD: validate the requested role is within the actor's
+    // authority. SUPERVISOR can only create CASEWORKERs; only ADMIN can mint
+    // privileged accounts (NIST AC-5).
+    const requestedRole = role || "CASEWORKER";
+    const allowed = rolesActorMayAssign(req.user.role);
+    if (!allowed.includes(requestedRole)) {
+      return res.status(403).json({
+        error: `Your role (${req.user.role}) may only create accounts with role(s): ${allowed.join(", ")}`,
+      });
+    }
+
     const passwordError = validatePasswordComplexity(password);
     if (passwordError) {
       return res.status(400).json({ error: passwordError });
@@ -364,7 +410,7 @@ router.post("/register", requireVerifiedAuth, requireRole("ADMIN", "SUPERVISOR")
         name,
         email,
         password: hashed,
-        role: role || "CASEWORKER",
+        role: requestedRole,
       },
     });
 
@@ -421,8 +467,17 @@ router.get("/users", requireVerifiedAuth, requireRole("ADMIN", "SUPERVISOR"), as
 router.put("/users/:id", requireVerifiedAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     const { role } = req.body;
-    if (!role || !["CASEWORKER", "SUPERVISOR", "ADMIN"].includes(role)) {
+    if (!role || !ASSIGNABLE_ROLES.includes(role)) {
       return res.status(400).json({ error: "Valid role is required" });
+    }
+
+    // NIST AC-5: an admin may not change their own role. This blocks
+    // self-promotion/self-demotion used to obscure other actions. Role
+    // changes to one's own account must be performed by a different admin.
+    if (req.params.id === req.user.id) {
+      return res.status(403).json({
+        error: "Admins cannot change their own role. Another admin must perform this action.",
+      });
     }
 
     const target = await prisma.caseworker.findFirst({
