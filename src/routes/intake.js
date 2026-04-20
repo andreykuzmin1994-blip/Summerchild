@@ -10,7 +10,7 @@ const { logAuditEvent, EVENTS, ACTORS } = require("../services/auditLogger");
 const { calculateFullEligibility } = require("../services/snapCalculator");
 const { runConsistencyChecks } = require("../services/consistencyChecker");
 const { calculatePredictiveScore, formatRiskSummary } = require("../services/errorPredictor");
-const { aiMessageLimiter, intakeStartLimiter } = require("../middleware/rateLimiter");
+const { aiMessageLimiter, intakeStartLimiter, staffPinLimiter } = require("../middleware/rateLimiter");
 const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
 const { withRetry } = require("../services/dbRetry");
@@ -395,7 +395,7 @@ async function generateDocumentChecklist(intakeId) {
  * Start a new intake session. Returns session token, queue number, and welcome message.
  * Expects: { countyId, language, displayName } where displayName is "FirstName L." format.
  */
-router.post("/start", requireStaffPin, injectionGuardMiddleware, intakeStartLimiter, async (req, res) => {
+router.post("/start", requireStaffPin, staffPinLimiter, injectionGuardMiddleware, intakeStartLimiter, async (req, res) => {
   try {
     const { countyId, language, displayName } = req.body;
 

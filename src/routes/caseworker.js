@@ -7,9 +7,17 @@ const { calculateFullEligibility } = require("../services/snapCalculator");
 const { eligibilityCache, statsCache } = require("../services/queryCache");
 const { refreshErrorPatterns, getAccuracyStats } = require("../services/errorPredictor");
 const { buildAuthCookieOptions } = require("../lib/cookies");
+const { csrfProtection } = require("../middleware/csrfProtection");
 
 const prisma = new PrismaClient();
 const router = express.Router();
+
+// CSRF defense-in-depth for cookie-authenticated mutations (NIST SC-7).
+// Login is exempt — the client has no cookie yet; authLimiter already gates it.
+router.use((req, res, next) => {
+  if (req.method === "POST" && req.path === "/login") return next();
+  return csrfProtection(req, res, next);
+});
 
 function validatePasswordComplexity(password) {
   if (!password || password.length < 12) return "Password must be at least 12 characters";

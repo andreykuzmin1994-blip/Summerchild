@@ -118,22 +118,31 @@ function checkForInjection(userInput) {
   // Unicode normalization: defeats homoglyph and invisible-character bypasses
   const normalized = normalizeUnicode(raw);
 
-  // Encoded payload detection (base64, hex, rot13)
+  // Encoded payload detection (base64, hex, rot13) — check both raw and
+  // normalized. Normalization can strip characters that would split an
+  // encoded blob into smaller fragments below detection thresholds.
+  const encodedCheckRaw = detectEncodedPayload(raw);
+  if (encodedCheckRaw.detected) {
+    return { blocked: true, reason: `encoded_payload: ${encodedCheckRaw.encoding}` };
+  }
   const encodedCheck = detectEncodedPayload(normalized);
   if (encodedCheck.detected) {
     return { blocked: true, reason: `encoded_payload: ${encodedCheck.encoding}` };
   }
 
-  // Pattern matching against normalized text
+  // Pattern matching — run against BOTH the raw input and the normalized
+  // form. Some attacks embed invisible chars so the raw text doesn't match
+  // regex; others use homoglyphs that only the normalized form exposes.
+  // Checking both closes the gap (defense-in-depth).
   for (const pattern of INJECTION_PATTERNS) {
-    if (pattern.test(normalized)) {
+    if (pattern.test(raw) || pattern.test(normalized)) {
       return { blocked: true, reason: pattern.source };
     }
   }
 
-  // Structural pattern matching
+  // Structural pattern matching — same raw+normalized strategy
   for (const pattern of STRUCTURAL_PATTERNS) {
-    if (pattern.test(normalized)) {
+    if (pattern.test(raw) || pattern.test(normalized)) {
       return { blocked: true, reason: `structural_injection: ${pattern.source}` };
     }
   }

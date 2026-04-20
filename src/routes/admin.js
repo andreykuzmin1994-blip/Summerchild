@@ -5,9 +5,14 @@ const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
 
 const { statsCache } = require("../services/queryCache");
+const { csrfProtection } = require("../middleware/csrfProtection");
 
 const prisma = new PrismaClient();
 const router = express.Router();
+
+// CSRF defense — currently admin.js has only GETs, but this future-proofs
+// any added mutations (NIST SC-7).
+router.use(csrfProtection);
 const log = child("admin");
 
 /**
