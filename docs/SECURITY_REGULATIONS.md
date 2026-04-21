@@ -4,7 +4,7 @@ Authoritative list of the security and privacy regimes Cushion Gov must comply w
 
 **This document is the source of truth for compliance scope.** Any change that touches authentication, authorization, cryptography, logging, PII handling, data retention, network boundaries, dependency management, or incident response MUST be checked against this file before merging, and this file MUST be updated in the same commit if the posture changes.
 
-Last reviewed: 2026-04-20
+Last reviewed: 2026-04-21
 Owner: Security / platform engineering
 Review cadence: on every security-relevant PR, and at minimum quarterly
 
@@ -66,7 +66,7 @@ Legend: **OK** = implemented and tested · **PARTIAL** = implemented but gaps re
 | AU-6 Audit review / tamper | OK | `verifyAuditLogImmutability()` checks DB perms; audit table DELETE revoked at deploy time (OPS). |
 | AU-5 Response to audit failures | **TODO** | No alerting when log writes fail; no PagerDuty/CloudWatch integration. |
 | AU-8 Time stamps | OK app-side | ISO 8601 from server clock. NTP sync is **OPS**. |
-| AU-11 Retention | PARTIAL | `CONVERSATION_LOG_RETENTION_DAYS=90` env-configurable; no in-app enforcement job. |
+| AU-11 Retention | PARTIAL | ConversationLog retention enforced by scheduled job in `src/services/retentionScheduler.js` + `src/services/retentionJob.js` (AU-11 for conversation logs: OK). Daily cron at 02:00 UTC, tx-scoped `pg_try_advisory_xact_lock`, fail-closed audit writes (`DATA_RETENTION_STARTED`/`POLICY_EXECUTED`/`COMPLETED`), circuit breaker at 5000 rows, clock-skew guard, dry-run + leader-election defaults fail-closed. Unit + concurrency tests in `tests/retentionJob.test.js`. **Remaining gap (still PARTIAL):** abandoned-intake purge and deactivated-caseworker purge require schema migrations (`IntakeStatus` enum lacks ABANDONED/TIMED_OUT; `AuditLog.intakeId` FK needs `onDelete: SetNull`; `IntakeReview.caseworkerId` is non-nullable, forcing soft-delete for caseworkers). Tracked as §3 backlog item 5. |
 | AU-12 Audit generation | OK | Structured JSON logger with correlation IDs. |
 
 ### System & Communications Protection (SC) — 800-53 SC / 800-171 §3.13
@@ -111,7 +111,7 @@ Legend: **OK** = implemented and tested · **PARTIAL** = implemented but gaps re
 
 | Control | Status | Evidence / Gap |
 |---|---|---|
-| IR-4 Incident handling | PARTIAL | `docs/INCIDENT_RESPONSE_PLAYBOOK.md` exists; not wired to code-level alerts. |
+| IR-4 Incident handling | PARTIAL | `docs/INCIDENT_RESPONSE_PLAYBOOK.md` exists; not wired to code-level alerts. First dated tabletop exercise template filed at `docs/compliance/tabletop-2026-Q2-prompt-injection-pii.md` (IR-3/IR-4 evidence pending the dated run). |
 | IR-6 Incident reporting | **TODO** | No automated paging on injection/CSRF spikes. |
 
 ### Media Protection (MP) — 800-53 MP / 800-171 §3.8
@@ -156,7 +156,7 @@ Ordered by priority. Each item should be delivered as its own PR on a `claude/<t
 2. **MFA for caseworker accounts (IA-2(1), IA-2(2))** — TOTP via `otplib` or WebAuthn via `@simplewebauthn/server`; secret encrypted with `fieldCrypto`; enrollment + recovery codes; gate privileged actions. **When this lands, the AC-7 counter reset in `loginHandler` MUST move post-MFA** — otherwise a valid password alone wipes the counter.
 3. **Password-reset email OTP (IA-5)** — Async email OTP before `hashPassword()` in admin reset flow. Hash the token at rest (SHA-256), single-use, ≤15-min TTL. Reference: Devise `:recoverable` (post-CVE-2019-16109).
 4. **`npm audit` + Dependabot + SBOM in CI (SI-2, RA-5, CM-8)** — Fail build on high/critical (`npm audit --omit=dev`); CycloneDX SBOM via `@cyclonedx/cyclonedx-npm` after clean `npm ci`; Dependabot PRs.
-5. **Audit-log retention enforcement (AU-11)** — Scheduled job prunes beyond `CONVERSATION_LOG_RETENTION_DAYS`; emits audit event on prune. Long-term: S3 lifecycle / OpenSearch ISM at the storage layer.
+5. **Remaining AU-11 scope: abandoned-intake + deactivated-caseworker purges** — DELIVERED for ConversationLog (`src/services/retentionScheduler.js`, April 2026). Remaining: (a) add `ABANDONED`/`TIMED_OUT` to `IntakeStatus` enum; (b) migration to make `AuditLog.intakeId` `onDelete: SetNull` so intake delete does not block; (c) soft-delete path for `Caseworker` rows (null PII columns, set `purgedAt`) because `IntakeReview.caseworkerId` is non-nullable and hard delete would break AU-10 non-repudiation. Long-term: S3 lifecycle / OpenSearch ISM at the storage layer.
 6. **Alerting hook interface (AU-5, IR-6, SI-4)** — Pluggable sink (PagerDuty/CloudWatch) for INJECTION_BLOCKED/CSRF_BLOCKED/LOGIN_FAILED/ACCOUNT_LOCKED spikes. Bounded queue + drop-with-metric; dedup. Reference: Keycloak `EventListenerProvider` SPI.
 7. **KMS envelope encryption (SC-12, SC-28)** — Replace static env keys with KMS-wrapped DEKs; rotation without redeploy. Prefer AWS Encryption SDK for JS or Google Tink over hand-rolled AES-GCM with static key IDs.
 8. **Session memory zeroization (MP-6)** — Overwrite session objects before cleanup. Use `Buffer` (not `String`) for PII in transit; document the V8 `String` zeroization limitation in the SSP.

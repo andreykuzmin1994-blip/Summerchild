@@ -37,26 +37,26 @@
 
 ### Automated Purge Jobs
 
-The following scheduled jobs run daily at 02:00 UTC:
+Implementation: `src/services/retentionScheduler.js` (daily at `RETENTION_CRON_EXPRESSION`, default `0 2 * * * UTC`). Governed by `RETENTION_ENABLED` and `RETENTION_DRY_RUN` env vars. All runs emit `DATA_RETENTION_STARTED` / `DATA_RETENTION_POLICY_EXECUTED` (with `dryRun` flag and counts) / `DATA_RETENTION_COMPLETED` audit events (fail-closed: if the audit write fails, the deletion is rolled back in the same transaction).
 
-**Abandoned Intake Cleanup** (90-day retention):
-```sql
--- Intakes that were never completed, older than 90 days
-DELETE FROM intakes
-WHERE status IN ('IN_PROGRESS', 'ABANDONED', 'TIMED_OUT')
-  AND created_at < NOW() - INTERVAL '90 days';
+**Conversation Log Cleanup** — IMPLEMENTED. Policy: delete rows whose parent intake is `REVIEWED` and whose *last* `IntakeReview.reviewedAt` is older than `CONVERSATION_LOG_RETENTION_DAYS` (default 90). The last-review check (rather than `intake.updated_at`) means re-opening a reviewed case resets the clock correctly.
+
+```js
+// Logical equivalent (see retentionJob.js:findConversationLogCandidates for the Prisma call)
+SELECT c.*
+FROM conversation_logs c
+JOIN intakes i ON c.intake_id = i.id
+WHERE i.status = 'REVIEWED'
+  AND NOT EXISTS (
+    SELECT 1 FROM intake_reviews r
+    WHERE r.intake_id = i.id
+      AND r.reviewed_at >= NOW() - INTERVAL '90 days'
+  );
 ```
 
-**Conversation Log Cleanup** (90-day post-review retention):
-```sql
--- Conversation logs for reviewed intakes older than 90 days
-DELETE FROM conversation_logs
-WHERE intake_id IN (
-  SELECT id FROM intakes
-  WHERE status = 'REVIEWED'
-    AND updated_at < NOW() - INTERVAL '90 days'
-);
-```
+**Abandoned Intake Cleanup** — NOT YET IMPLEMENTED. Blocked on schema changes (see `docs/SECURITY_REGULATIONS.md` §3 item 5): `IntakeStatus` enum lacks `ABANDONED` and `TIMED_OUT`, and `AuditLog.intakeId` FK requires an `onDelete: SetNull` migration before intake rows can be deleted without orphaning audit evidence. Until delivered, abandoned intakes accumulate. Track: `src/services/retentionJob.js` header comment.
+
+**Caseworker Account Cleanup** — NOT YET IMPLEMENTED. Blocked on `IntakeReview.caseworkerId` being non-nullable. Delivery path is soft-delete (null PII columns, set `purgedAt`), not hard-delete, to preserve AU-10 non-repudiation.
 
 ### Manual Deletion (Authorized Only)
 

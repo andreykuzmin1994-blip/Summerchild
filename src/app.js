@@ -8,6 +8,7 @@ const { ipAllowlistMiddleware } = require("./middleware/ipAllowlist");
 const { validateSystemPrompt } = require("./middleware/systemPromptValidator");
 const { buildSystemPrompt } = require("./services/aiAssistant");
 const { verifyAuditLogImmutability } = require("./services/auditLogger");
+const { retentionScheduler } = require("./services/retentionScheduler");
 const { correlationMiddleware, requestLogMiddleware, child } = require("./services/logger");
 
 const intakeRoutes = require("./routes/intake");
@@ -231,6 +232,13 @@ async function startServer() {
         if (process.env.NODE_ENV === "production") throw err;
         log.warn("Skipping audit immutability check", { error: err.message });
       }
+    }
+
+    // Data retention scheduler (NIST 800-53 AU-11). Starts only on the leader
+    // replica and only if RETENTION_ENABLED=true. Defaults are fail-closed:
+    // disabled, dry-run, leader=false-in-prod. See retentionScheduler.js.
+    if (process.env.NODE_ENV !== "test") {
+      retentionScheduler.start();
     }
 
     app.listen(PORT, () => {
