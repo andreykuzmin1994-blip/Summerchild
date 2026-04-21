@@ -145,13 +145,15 @@ async function requireVerifiedAuth(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
 
-    // Server-side verification: check caseworker still exists and is active
+    // Server-side verification: check caseworker still exists and is active.
+    // NIST AU-10/AU-11: also reject purged accounts — their PII columns have
+    // been tombstoned and they must not be able to re-authenticate.
     const caseworker = await prisma.caseworker.findUnique({
       where: { id: decoded.id },
-      select: { id: true, countyId: true, role: true, deactivatedAt: true },
+      select: { id: true, countyId: true, role: true, deactivatedAt: true, purgedAt: true },
     });
 
-    if (!caseworker || caseworker.deactivatedAt) {
+    if (!caseworker || caseworker.deactivatedAt || caseworker.purgedAt) {
       return res.status(401).json({ error: "User account is inactive or not found" });
     }
 

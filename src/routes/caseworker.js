@@ -80,7 +80,10 @@ async function loginHandler(req, res) {
     }
 
     const caseworker = await prisma.caseworker.findUnique({ where: { email } });
-    if (!caseworker || caseworker.deactivatedAt) {
+    // NIST AU-10/AU-11: reject purged accounts as well as deactivated ones.
+    // A purged row has a tombstoned password that bcrypt cannot validate,
+    // but we gate here as defense-in-depth BEFORE the bcrypt compare.
+    if (!caseworker || caseworker.deactivatedAt || caseworker.purgedAt) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -523,7 +526,7 @@ router.post("/register", requireVerifiedAuth, requireRole("ADMIN", "SUPERVISOR")
 router.get("/users", requireVerifiedAuth, requireRole("ADMIN", "SUPERVISOR"), async (req, res) => {
   try {
     const caseworkers = await prisma.caseworker.findMany({
-      where: { countyId: req.user.countyId, deactivatedAt: null },
+      where: { countyId: req.user.countyId, deactivatedAt: null, purgedAt: null },
       select: {
         id: true,
         name: true,
@@ -561,8 +564,11 @@ router.put("/users/:id", requireVerifiedAuth, requireRole("ADMIN"), async (req, 
       });
     }
 
+    // NIST AU-10/AU-11: purged accounts are not addressable by admin
+    // user-management routes. Resetting a purged password would re-enable
+    // a tombstoned account.
     const target = await prisma.caseworker.findFirst({
-      where: { id: req.params.id, countyId: req.user.countyId },
+      where: { id: req.params.id, countyId: req.user.countyId, purgedAt: null },
     });
     if (!target) {
       return res.status(404).json({ error: "User not found" });
@@ -601,8 +607,11 @@ router.post("/users/:id/reset-password", requireVerifiedAuth, requireRole("ADMIN
       return res.status(400).json({ error: passwordError });
     }
 
+    // NIST AU-10/AU-11: purged accounts are not addressable by admin
+    // user-management routes. Resetting a purged password would re-enable
+    // a tombstoned account.
     const target = await prisma.caseworker.findFirst({
-      where: { id: req.params.id, countyId: req.user.countyId },
+      where: { id: req.params.id, countyId: req.user.countyId, purgedAt: null },
     });
     if (!target) {
       return res.status(404).json({ error: "User not found" });
@@ -643,8 +652,11 @@ router.delete("/users/:id", requireVerifiedAuth, requireRole("ADMIN"), async (re
       return res.status(400).json({ error: "Cannot deactivate your own account" });
     }
 
+    // NIST AU-10/AU-11: purged accounts are not addressable by admin
+    // user-management routes. Resetting a purged password would re-enable
+    // a tombstoned account.
     const target = await prisma.caseworker.findFirst({
-      where: { id: req.params.id, countyId: req.user.countyId },
+      where: { id: req.params.id, countyId: req.user.countyId, purgedAt: null },
     });
     if (!target) {
       return res.status(404).json({ error: "User not found" });

@@ -183,6 +183,8 @@ enum IntakeStatus {
   COMPLETED
   REVIEWED
   TRANSFERRED
+  ABANDONED   // NIST AU-11: explicit terminal state for retention cleanup
+  TIMED_OUT   // NIST AU-11: explicit terminal state for retention cleanup
 }
 
 enum RiskScore {
@@ -419,6 +421,11 @@ model Caseworker {
   password         String
   role             CaseworkerRole @default(CASEWORKER)
   deactivatedAt    DateTime?      @map("deactivated_at")
+  // NIST AU-10 / AU-11: soft-delete tombstone. When set, the PII columns
+  // (name, email, password) have been overwritten with non-reversible
+  // tombstones but the row is preserved to keep IntakeReview.caseworkerId
+  // referential integrity. Auth paths MUST reject purged rows.
+  purgedAt         DateTime?      @map("purged_at")
   // NIST AC-7 / IA-5: account lockout after MAX_FAILED_LOGINS bad attempts.
   loginFailedCount Int            @default(0) @map("login_failed_count")
   lockedUntil      DateTime?      @map("locked_until")

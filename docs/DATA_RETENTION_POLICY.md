@@ -54,9 +54,9 @@ WHERE i.status = 'REVIEWED'
   );
 ```
 
-**Abandoned Intake Cleanup** — NOT YET IMPLEMENTED. Blocked on schema changes (see `docs/SECURITY_REGULATIONS.md` §3 item 5): `IntakeStatus` enum lacks `ABANDONED` and `TIMED_OUT`, and `AuditLog.intakeId` FK requires an `onDelete: SetNull` migration before intake rows can be deleted without orphaning audit evidence. Until delivered, abandoned intakes accumulate. Track: `src/services/retentionJob.js` header comment.
+**Abandoned Intake Cleanup** — IMPLEMENTED. Rule: `status IN ('ABANDONED', 'TIMED_OUT') AND createdAt < cutoff AND caseworkerId IS NULL AND NOT EXISTS any IntakeReview`. **IN_PROGRESS is NOT purged** — a stuck session is not an abandoned one; a separate (not yet built) state-transition cron is responsible for moving idle IN_PROGRESS rows to TIMED_OUT before this job sees them. Implementation: `runAbandonedIntakePolicy` + `purgeOneIntakeInTx` in `src/services/retentionJob.js`. Explicit ordered child delete (no FK cascade) — AuditLog rows survive with `intakeId` set to NULL so the 7-year audit evidence is preserved per 7 CFR 275.12.
 
-**Caseworker Account Cleanup** — NOT YET IMPLEMENTED. Blocked on `IntakeReview.caseworkerId` being non-nullable. Delivery path is soft-delete (null PII columns, set `purgedAt`), not hard-delete, to preserve AU-10 non-repudiation.
+**Caseworker Account Cleanup** — IMPLEMENTED as **soft-delete** (NOT hard-delete — `IntakeReview.caseworkerId` is non-nullable and AU-10 non-repudiation requires the row to survive). Rule: `deactivatedAt < cutoff AND purgedAt IS NULL`. Cutoff defaults to `CASEWORKER_PURGE_RETENTION_DAYS` = 1095 (3 years); floor is 730 per NIST IA-4 account identifier reuse. Purge action overwrites `name`, `email`, `password` with non-reversible tombstones and sets `purgedAt = NOW()`. The `password` tombstone is intentionally NOT bcrypt-shaped so `bcrypt.compare` returns `false`; the application-layer `purgedAt IS NULL` filter in `src/middleware/auth.js` and `src/routes/caseworker.js` admin routes is defense-in-depth.
 
 ### Manual Deletion (Authorized Only)
 

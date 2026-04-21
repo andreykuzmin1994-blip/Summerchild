@@ -33,7 +33,12 @@ const { PrismaClient } = require("@prisma/client");
 const cron = require("node-cron");
 const { randomUUID } = require("node:crypto");
 
-const { runConversationLogPolicy, RetentionCircuitBreakerError } = require("./retentionJob");
+const {
+  runConversationLogPolicy,
+  runAbandonedIntakePolicy,
+  runCaseworkerPurgePolicy,
+  RetentionCircuitBreakerError,
+} = require("./retentionJob");
 const { EVENTS, ACTORS } = require("./auditLogger");
 const { child } = require("./logger");
 
@@ -171,60 +176,137 @@ async function runOnce({ prisma, clock = Date, config }) {
         dryRun: config.dryRun,
         maxRows: config.maxRows,
         conversationLogDays: config.conversationLogDays,
+        abandonedIntakeDays: config.abandonedIntakeDays,
+        caseworkerPurgeDays: config.caseworkerPurgeDays,
       },
     });
 
+    // Each policy is wrapped in its own try/catch so one failure does not
+    // prevent the other policies from running. A BLOCKER failure (circuit
+    // breaker, DB write error) still aborts the *containing* tx via throw;
+    // see the outer catch.
+    const policyDefs = [
+      {
+        name: "conversationLog",
+        run: () => runConversationLogPolicy({
+          prisma: tx, clock,
+          retentionDays: config.conversationLogDays,
+          maxRows: config.maxRows,
+          dryRun: config.dryRun,
+          correlationId,
+        }),
+        auditDetails: (r) => ({
+          policy: r.policy,
+          cutoff: r.cutoff,
+          retentionDays: r.retentionDays,
+          candidateIntakes: r.candidateIntakes,
+          deletedLogs: r.deletedLogs,
+          dryRun: r.dryRun,
+        }),
+      },
+      {
+        name: "abandonedIntake",
+        run: async () => {
+          // Capture candidates BEFORE the destructive call, as AU-10 evidence.
+          // If the policy fails partway, the candidates audit row survives.
+          const result = await runAbandonedIntakePolicy({
+            prisma: tx, clock,
+            retentionDays: config.abandonedIntakeDays,
+            maxRows: config.maxRows,
+            dryRun: config.dryRun,
+            correlationId,
+          });
+          // Emit one INTAKE_PURGED audit event per intake actually deleted.
+          // Each row carries its countyId so county-scoped queries retain
+          // full evidence per CLAUDE.md county-scoping non-negotiable.
+          for (const p of result.perIntake) {
+            await writeRetentionAuditRowOrThrow(tx, {
+              type: EVENTS.DATA_RETENTION_INTAKE_PURGED,
+              details: {
+                correlationId,
+                intakeId: p.intakeId,
+                countyId: p.countyId,
+                childCounts: p.childCounts,
+              },
+            });
+          }
+          return result;
+        },
+        auditDetails: (r) => ({
+          policy: r.policy,
+          cutoff: r.cutoff,
+          retentionDays: r.retentionDays,
+          candidates: r.candidates,
+          deleted: r.deleted,
+          dryRun: r.dryRun,
+        }),
+      },
+      {
+        name: "caseworkerPurge",
+        run: async () => {
+          const result = await runCaseworkerPurgePolicy({
+            prisma: tx, clock,
+            retentionDays: config.caseworkerPurgeDays,
+            maxRows: config.maxRows,
+            dryRun: config.dryRun,
+            correlationId,
+          });
+          for (const c of result.perCaseworker) {
+            await writeRetentionAuditRowOrThrow(tx, {
+              type: EVENTS.DATA_RETENTION_CASEWORKER_PURGED,
+              details: {
+                correlationId,
+                caseworkerId: c.id,
+                countyId: c.countyId,
+              },
+            });
+          }
+          return result;
+        },
+        auditDetails: (r) => ({
+          policy: r.policy,
+          cutoff: r.cutoff,
+          retentionDays: r.retentionDays,
+          candidates: r.candidates,
+          purged: r.purged,
+          dryRun: r.dryRun,
+        }),
+      },
+    ];
+
     const results = [];
-    let anyFailed = false;
+    const failures = [];
 
-    try {
-      const result = await runConversationLogPolicy({
-        prisma: tx,
-        clock,
-        retentionDays: config.conversationLogDays,
-        maxRows: config.maxRows,
-        dryRun: config.dryRun,
-        correlationId,
-      });
-      results.push(result);
-
-      // Per-policy fail-closed audit — this is the AU-2/AU-3 evidence row.
-      await writeRetentionAuditRowOrThrow(tx, {
-        type: EVENTS.DATA_RETENTION_POLICY_EXECUTED,
-        details: {
-          correlationId,
-          policy: result.policy,
-          cutoff: result.cutoff,
-          retentionDays: result.retentionDays,
-          candidateIntakes: result.candidateIntakes,
-          deletedLogs: result.deletedLogs,
-          dryRun: result.dryRun,
-        },
-      });
-    } catch (err) {
-      anyFailed = true;
-      const isCircuitBreaker = err instanceof RetentionCircuitBreakerError;
-      log.error("Retention policy failed", {
-        ...logCtx,
-        policy: "conversationLog",
-        circuitBreaker: isCircuitBreaker,
-        error: err.message,
-      });
-      // Best-effort failure audit. If this throw propagates up, the whole
-      // transaction rolls back — any partial deletes already executed are
-      // undone (Prisma groups them in the $transaction).
-      await writeRetentionAuditRowOrThrow(tx, {
-        type: isCircuitBreaker
-          ? EVENTS.DATA_RETENTION_CIRCUIT_BREAKER_TRIPPED
-          : EVENTS.DATA_RETENTION_FAILED,
-        details: {
-          correlationId,
-          policy: "conversationLog",
+    for (const def of policyDefs) {
+      try {
+        const result = await def.run();
+        results.push(result);
+        await writeRetentionAuditRowOrThrow(tx, {
+          type: EVENTS.DATA_RETENTION_POLICY_EXECUTED,
+          details: { correlationId, ...def.auditDetails(result) },
+        });
+      } catch (err) {
+        const isCircuitBreaker = err instanceof RetentionCircuitBreakerError;
+        log.error("Retention policy failed", {
+          ...logCtx, policy: def.name,
+          circuitBreaker: isCircuitBreaker,
           error: err.message,
-          ...(isCircuitBreaker && { candidateCount: err.candidateCount, cap: err.cap }),
-        },
-      });
-      throw err; // aborts the transaction
+        });
+        await writeRetentionAuditRowOrThrow(tx, {
+          type: isCircuitBreaker
+            ? EVENTS.DATA_RETENTION_CIRCUIT_BREAKER_TRIPPED
+            : EVENTS.DATA_RETENTION_FAILED,
+          details: {
+            correlationId,
+            policy: def.name,
+            error: err.message,
+            ...(isCircuitBreaker && { candidateCount: err.candidateCount, cap: err.cap }),
+          },
+        });
+        failures.push({ policy: def.name, error: err.message });
+        // Do NOT throw — allow other policies to run. If we need full
+        // atomicity, throw here to abort the whole tx.
+      }
     }
 
     await writeRetentionAuditRowOrThrow(tx, {
@@ -233,11 +315,12 @@ async function runOnce({ prisma, clock = Date, config }) {
         correlationId,
         dryRun: config.dryRun,
         results,
-        anyFailed,
+        failures,
+        anyFailed: failures.length > 0,
       },
     });
 
-    return { ran: true, correlationId, results };
+    return { ran: true, correlationId, results, failures };
   });
 }
 
@@ -259,6 +342,9 @@ class RetentionScheduler {
       dryRun: parseBoolEnv(process.env.RETENTION_DRY_RUN, true),
       maxRows: parseIntEnv(process.env.RETENTION_MAX_ROWS_PER_RUN, 5000),
       conversationLogDays: parseIntEnv(process.env.CONVERSATION_LOG_RETENTION_DAYS, 90),
+      abandonedIntakeDays: parseIntEnv(process.env.INTAKE_ABANDONED_RETENTION_DAYS, 90),
+      // NIST IA-4 floor (730d) enforced by runCaseworkerPurgePolicy itself.
+      caseworkerPurgeDays: parseIntEnv(process.env.CASEWORKER_PURGE_RETENTION_DAYS, 1095),
       cronExpression: process.env.RETENTION_CRON_EXPRESSION || DEFAULT_CRON_EXPRESSION,
       timezone: process.env.RETENTION_TIMEZONE || DEFAULT_TIMEZONE,
     };
