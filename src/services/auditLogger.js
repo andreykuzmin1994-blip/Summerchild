@@ -133,6 +133,10 @@ const EVENTS = {
   DATA_RETENTION_INTAKE_PURGED: "DATA_RETENTION_INTAKE_PURGED",
   DATA_RETENTION_CASEWORKER_PURGE_CANDIDATES: "DATA_RETENTION_CASEWORKER_PURGE_CANDIDATES",
   DATA_RETENTION_CASEWORKER_PURGED: "DATA_RETENTION_CASEWORKER_PURGED",
+  // NIST SC-28: v2 field-level decrypt failure. Tampering, missing context,
+  // wrong countyId, or wrong rowId — the auth-tag check failed. Surfaced
+  // via fieldCrypto.safeDecrypt's onFailure hook.
+  FIELD_DECRYPT_FAILED: "FIELD_DECRYPT_FAILED",
 };
 
 const ACTORS = {

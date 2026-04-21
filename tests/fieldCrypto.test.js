@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { Buffer } from "node:buffer";
 
+// v1 API is the subject of this file — ConversationLog.content semantics.
+// v2 (HKDF + richer AAD) is covered in tests/fieldCryptoV2.test.js.
 const {
-  encrypt,
-  decrypt,
-  safeDecrypt,
+  encryptV1: encrypt,
+  decryptV1: decrypt,
+  safeDecryptV1: safeDecrypt,
   isEncrypted,
   SENTINEL_DECRYPT_FAILED,
 } = require("../src/lib/fieldCrypto");

@@ -1,31 +1,32 @@
 /**
  * Field-level encryption for sensitive at-rest values (NIST 800-53 SC-28).
  *
- * Used for ConversationLog.content, which stores free-text applicant
- * utterances. The schema is otherwise PII-minimized — this is the highest
- * PII-exposure surface in the DB.
+ * Two coexisting wire formats:
  *
- * Design (synthesized from Coder proposal + Reviewer amendments):
+ *   v1  — ConversationLog.content. AAD = intakeId (UTF-8). Uses the root
+ *         ring key directly (no subkey derivation). Preserved bit-for-bit
+ *         for backward compatibility with existing rows. Exposed as
+ *         `encryptV1` / `decryptV1` / `safeDecryptV1`.
  *
- *   - AES-256-GCM via Node's built-in `crypto` module (no new deps).
+ *   v2  — All other PII columns (Applicant.displayName, IntakeReview.notes,
+ *         and future additions). Wire format `v2.<keyVersion>:iv:tag:ct`.
+ *         AES-GCM subkey derived via HKDF-SHA256 per (keyVersion, table,
+ *         column) — a leak of one subkey does not compromise other columns.
+ *         AAD = `cushion-v2|${table}|${column}|${countyId}|${rowId}` —
+ *         binds ciphertext to its exact row and tenant, making DB-dump
+ *         swap attacks (row-to-row, column-to-column, county-to-county)
+ *         fail the auth-tag check. Exposed as `encrypt` / `decrypt` /
+ *         `safeDecrypt`.
+ *
+ * Both formats:
+ *   - AES-256-GCM (Node's built-in `crypto` module).
  *   - Key RING: FIELD_ENCRYPTION_KEYS="v1:<b64>,v2:<b64>". The first entry
- *     is the active writer; all entries are usable for decryption. This
- *     enables zero-downtime key rotation without a schema migration.
- *   - Associated Data = intakeId (UTF-8). Binds each ciphertext to the
- *     intake it belongs to, preventing DB-dump swap attacks between
- *     cases (FedRAMP AC-4 / SI-7).
- *   - Versioned ciphertext format: `<version>:<b64-iv>:<b64-tag>:<b64-ct>`
- *     e.g. `v1:abc...:def...:ghi...`.
- *   - Legacy passthrough: shape-strict regex, not bare prefix. A user
- *     message like "v1: my rent is due" reads back unchanged because it
- *     doesn't match the full 4-segment base64 shape.
- *   - Graceful decrypt: `safeDecrypt(ct, intakeId)` returns a sentinel
- *     string on auth-tag failure (tampering, wrong key, wrong AAD) and
- *     never throws into the caller's response path. Surfaces the failure
- *     via audit logging so investigators can follow up.
- *   - Startup validation: module-load check refuses to boot in production
- *     if FIELD_ENCRYPTION_KEYS is missing, malformed, or contains the
- *     well-known dev placeholder.
+ *     is the active root-key writer; all entries are usable for decryption
+ *     via their version tag. Zero-downtime rotation without schema change.
+ *   - Legacy plaintext passthrough (shape-strict regex at module top).
+ *   - Graceful decrypt: `safeDecrypt*` returns a sentinel and calls the
+ *     onFailure hook for audit logging; never throws into the caller.
+ *   - Startup validation refuses prod boot on missing/placeholder keys.
  *
  * Key management:
  *   - Development: if FIELD_ENCRYPTION_KEYS is unset, a deterministic
@@ -50,11 +51,13 @@ const KEY_BYTES = 32;
 const ACTIVE_VERSION = "v1";
 const SENTINEL_DECRYPT_FAILED = "[decryption error — logged for investigation]";
 
-// Shape-strict ciphertext pattern: version + 3 base64 segments. IV and tag
-// are always non-empty; the final ct segment may be empty for empty-string
-// plaintext. Downstream length checks in decrypt() catch anything that
-// slips through (wrong iv/tag size → throws).
-const CIPHERTEXT_SHAPE = /^v\d+:[A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]*={0,2}$/;
+// Shape-strict ciphertext pattern covering both v1 and v2 wire formats.
+// v1 tag: `v1` | v2 tag: `v2.v1` (format.keyVersion). The tail is 3 base64
+// segments (iv, auth tag, ct). IV and tag are always non-empty; the final
+// ct segment may be empty for empty-string plaintext. Downstream length
+// checks catch anything that slips through (wrong iv/tag size → throws).
+const CIPHERTEXT_SHAPE =
+  /^v\d+(\.v\d+)?:[A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]*={0,2}$/;
 
 // Deterministic dev-only key. 32 bytes base64.
 // MUST never be accepted in production — see validateFieldEncryptionKeys().
@@ -147,21 +150,18 @@ function isEncrypted(s) {
   return typeof s === "string" && CIPHERTEXT_SHAPE.test(s);
 }
 
-/**
- * Encrypt plaintext with the active key, binding to the given intakeId
- * as Associated Data (AAD).
- *
- * @param {string} plaintext
- * @param {string} intakeId — bound as AAD; required
- * @returns {string} versioned ciphertext
- */
-function encrypt(plaintext, intakeId) {
+// ---------------------------------------------------------------------
+// v1 — ConversationLog.content. AAD = intakeId. Kept bit-identical for
+// backward compat with existing DB rows. Do NOT change this format.
+// ---------------------------------------------------------------------
+
+function encryptV1(plaintext, intakeId) {
   if (plaintext === null || plaintext === undefined) return plaintext;
   if (typeof plaintext !== "string") {
-    throw new TypeError("fieldCrypto.encrypt: plaintext must be a string");
+    throw new TypeError("fieldCrypto.encryptV1: plaintext must be a string");
   }
   if (!intakeId || typeof intakeId !== "string") {
-    throw new TypeError("fieldCrypto.encrypt: intakeId (AAD) is required");
+    throw new TypeError("fieldCrypto.encryptV1: intakeId (AAD) is required");
   }
   const { version, key } = getActiveKey();
   const iv = crypto.randomBytes(IV_BYTES);
@@ -172,39 +172,30 @@ function encrypt(plaintext, intakeId) {
   return `${version}:${iv.toString("base64")}:${tag.toString("base64")}:${ct.toString("base64")}`;
 }
 
-/**
- * Decrypt a versioned ciphertext bound to intakeId. Throws on:
- *   - malformed shape
- *   - unknown key version
- *   - auth-tag verification failure (tampering / wrong AAD / wrong key)
- *
- * Most callers should use safeDecrypt() instead — it catches these
- * failures and returns a sentinel + audit hook.
- *
- * Legacy passthrough: a string that does not match the strict ciphertext
- * shape is returned unchanged. This lets the system read DB rows written
- * before this feature shipped.
- */
-function decrypt(ciphertext, intakeId) {
+function decryptV1(ciphertext, intakeId) {
   if (ciphertext === null || ciphertext === undefined) return ciphertext;
   if (typeof ciphertext !== "string") return ciphertext;
   if (!isEncrypted(ciphertext)) return ciphertext; // legacy plaintext
 
-  if (!intakeId || typeof intakeId !== "string") {
-    throw new TypeError("fieldCrypto.decrypt: intakeId (AAD) is required");
+  const parts = ciphertext.split(":");
+  const [firstTag] = parts;
+  if (firstTag.includes(".")) {
+    throw new Error("fieldCrypto.decryptV1: v2 ciphertext — use decrypt() instead");
   }
 
-  const parts = ciphertext.split(":");
+  if (!intakeId || typeof intakeId !== "string") {
+    throw new TypeError("fieldCrypto.decryptV1: intakeId (AAD) is required");
+  }
+
   const [version, ivB64, tagB64, ctB64] = parts;
   const key = getKeyByVersion(version);
-  if (!key) {
-    throw new Error(`fieldCrypto.decrypt: unknown key version "${version}"`);
-  }
+  if (!key) throw new Error(`fieldCrypto.decryptV1: unknown key version "${version}"`);
+
   const iv = Buffer.from(ivB64, "base64");
   const tag = Buffer.from(tagB64, "base64");
   const ct = Buffer.from(ctB64, "base64");
   if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) {
-    throw new Error("fieldCrypto.decrypt: bad iv/tag length");
+    throw new Error("fieldCrypto.decryptV1: bad iv/tag length");
   }
   const decipher = crypto.createDecipheriv(ALGO, key, iv);
   decipher.setAAD(Buffer.from(intakeId, "utf8"));
@@ -213,20 +204,132 @@ function decrypt(ciphertext, intakeId) {
   return pt.toString("utf8");
 }
 
-/**
- * Decrypt-or-sentinel. Callers can safely use the result in responses
- * without a try/catch of their own. On failure:
- *   - returns SENTINEL_DECRYPT_FAILED
- *   - calls onFailure({ intakeId, error }) if provided, so callers can
- *     emit an audit event. Must not throw.
- *   - never returns raw ciphertext, IV, or tag bytes.
- */
-function safeDecrypt(ciphertext, intakeId, onFailure) {
+function safeDecryptV1(ciphertext, intakeId, onFailure) {
   try {
-    return decrypt(ciphertext, intakeId);
+    return decryptV1(ciphertext, intakeId);
   } catch (err) {
     if (typeof onFailure === "function") {
       try { onFailure({ intakeId, error: err.message, name: err.name }); } catch { /* never rethrow */ }
+    }
+    return SENTINEL_DECRYPT_FAILED;
+  }
+}
+
+// ---------------------------------------------------------------------
+// v2 — HKDF subkey per (keyVersion, table, column) + richer AAD that
+// binds ciphertext to { table, column, countyId, rowId }.
+// ---------------------------------------------------------------------
+
+const HKDF_HASH = "sha256";
+const HKDF_SALT = Buffer.alloc(0); // RFC 5869 §3.1: empty salt is OK for a pre-shared root key.
+const HKDF_INFO_VERSION_BYTE = 0x01; // bump if info-string format changes; irreversible.
+const V2_FORMAT_TAG = "v2";
+const AAD_VERSION_PREFIX = "cushion-v2";
+
+// Subkey cache: keyed by `${keyVersion}|${table}|${column}`.
+// Bounded by (ring size × tables × columns) — currently <20 entries for
+// the foreseeable future. NOT a memory leak; leave comment for future
+// security reviewers.
+const subkeyCache = new Map();
+
+function deriveSubkey(keyVersion, rootKey, table, column) {
+  const cacheKey = `${keyVersion}|${table}|${column}`;
+  const hit = subkeyCache.get(cacheKey);
+  if (hit) return hit;
+  // info = [0x01] || "cushion-gov|<table>|<column>|<keyVersion>"
+  // The version byte protects against future info-format changes
+  // permanently orphaning ciphertexts (Reviewer B, blocker #2).
+  const info = Buffer.concat([
+    Buffer.from([HKDF_INFO_VERSION_BYTE]),
+    Buffer.from(`cushion-gov|${table}|${column}|${keyVersion}`, "utf8"),
+  ]);
+  // hkdfSync returns an ArrayBuffer on Node 18+; wrap in Buffer before
+  // passing to createCipheriv (Reviewer B, blocker #1).
+  const derived = Buffer.from(crypto.hkdfSync(HKDF_HASH, rootKey, HKDF_SALT, info, KEY_BYTES));
+  subkeyCache.set(cacheKey, derived);
+  return derived;
+}
+
+function buildV2AAD({ table, column, countyId, rowId }) {
+  // Pipe-delimited; context fields are validated to not contain `|`.
+  // Prefixed with AAD_VERSION_PREFIX so a future format change can be
+  // distinguished from an AAD mismatch.
+  return Buffer.from(
+    `${AAD_VERSION_PREFIX}|${table}|${column}|${countyId}|${rowId}`,
+    "utf8"
+  );
+}
+
+function assertV2Ctx(ctx, fn) {
+  if (!ctx || typeof ctx !== "object") {
+    throw new TypeError(`fieldCrypto.${fn}: context { table, column, countyId, rowId } is required`);
+  }
+  for (const key of ["table", "column", "countyId", "rowId"]) {
+    const v = ctx[key];
+    if (typeof v !== "string" || v.length === 0) {
+      throw new TypeError(`fieldCrypto.${fn}: context.${key} must be a non-empty string`);
+    }
+    // `|` is our AAD delimiter — forbid it to keep encoding unambiguous.
+    if (v.includes("|")) {
+      throw new TypeError(`fieldCrypto.${fn}: context.${key} must not contain '|'`);
+    }
+  }
+}
+
+function encrypt(plaintext, ctx) {
+  if (plaintext === null || plaintext === undefined) return plaintext;
+  if (typeof plaintext !== "string") {
+    throw new TypeError("fieldCrypto.encrypt: plaintext must be a string");
+  }
+  assertV2Ctx(ctx, "encrypt");
+  const { version: keyVersion, key: rootKey } = getActiveKey();
+  const subkey = deriveSubkey(keyVersion, rootKey, ctx.table, ctx.column);
+  const iv = crypto.randomBytes(IV_BYTES);
+  const cipher = crypto.createCipheriv(ALGO, subkey, iv);
+  cipher.setAAD(buildV2AAD(ctx));
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${V2_FORMAT_TAG}.${keyVersion}:${iv.toString("base64")}:${tag.toString("base64")}:${ct.toString("base64")}`;
+}
+
+function decrypt(ciphertext, ctx) {
+  if (ciphertext === null || ciphertext === undefined) return ciphertext;
+  if (typeof ciphertext !== "string") return ciphertext;
+  if (!isEncrypted(ciphertext)) return ciphertext; // legacy plaintext passthrough
+
+  const parts = ciphertext.split(":");
+  if (parts.length !== 4) throw new Error("fieldCrypto.decrypt: malformed ciphertext");
+  const [formatTag, ivB64, tagB64, ctB64] = parts;
+
+  if (!formatTag.startsWith(`${V2_FORMAT_TAG}.`)) {
+    throw new Error("fieldCrypto.decrypt: v1 ciphertext requires decryptV1()");
+  }
+  assertV2Ctx(ctx, "decrypt");
+  const keyVersion = formatTag.slice(V2_FORMAT_TAG.length + 1);
+  const rootKey = getKeyByVersion(keyVersion);
+  if (!rootKey) throw new Error(`fieldCrypto.decrypt: unknown key version "${keyVersion}"`);
+
+  const subkey = deriveSubkey(keyVersion, rootKey, ctx.table, ctx.column);
+  const iv = Buffer.from(ivB64, "base64");
+  const tag = Buffer.from(tagB64, "base64");
+  const ct = Buffer.from(ctB64, "base64");
+  if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) {
+    throw new Error("fieldCrypto.decrypt: bad iv/tag length");
+  }
+  const decipher = crypto.createDecipheriv(ALGO, subkey, iv);
+  decipher.setAAD(buildV2AAD(ctx));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]).toString("utf8");
+}
+
+function safeDecrypt(ciphertext, ctx, onFailure) {
+  try {
+    return decrypt(ciphertext, ctx);
+  } catch (err) {
+    if (typeof onFailure === "function") {
+      try {
+        onFailure({ ctx, error: err.message, name: err.name });
+      } catch { /* never rethrow */ }
     }
     return SENTINEL_DECRYPT_FAILED;
   }
@@ -236,10 +339,18 @@ function safeDecrypt(ciphertext, intakeId, onFailure) {
 validateFieldEncryptionKeys();
 
 module.exports = {
+  // v2 API (primary): for all new PII columns.
   encrypt,
   decrypt,
   safeDecrypt,
+  // v1 API (legacy, ConversationLog.content only):
+  encryptV1,
+  decryptV1,
+  safeDecryptV1,
+  // utilities:
   isEncrypted,
   validateFieldEncryptionKeys,
   SENTINEL_DECRYPT_FAILED,
+  V2_FORMAT_TAG,
+  AAD_VERSION_PREFIX,
 };

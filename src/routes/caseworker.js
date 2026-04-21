@@ -8,7 +8,12 @@ const { eligibilityCache, statsCache } = require("../services/queryCache");
 const { refreshErrorPatterns, getAccuracyStats } = require("../services/errorPredictor");
 const { buildAuthCookieOptions } = require("../lib/cookies");
 const { csrfProtection } = require("../middleware/csrfProtection");
-const { safeDecrypt } = require("../lib/fieldCrypto");
+const {
+  safeDecryptV1: safeDecryptConversation,
+  encrypt: encryptFieldV2,
+} = require("../lib/fieldCrypto");
+const { decryptIntakeTreeInPlace } = require("../lib/intakeCrypto");
+const { randomUUID } = require("node:crypto");
 const {
   isAccountLocked,
   hasExpiredLock,
@@ -311,7 +316,7 @@ router.get("/intake/:id", requireVerifiedAuth, async (req, res) => {
     // that single turn, not a broken page.
     if (Array.isArray(intake.conversationLogs)) {
       for (const log of intake.conversationLogs) {
-        log.content = safeDecrypt(log.content, intake.id, (info) => {
+        log.content = safeDecryptConversation(log.content, intake.id, (info) => {
           logAuditEvent({
             type: "CONVERSATION_DECRYPT_FAILED",
             actorType: ACTORS.SYSTEM,
@@ -323,6 +328,12 @@ router.get("/intake/:id", requireVerifiedAuth, async (req, res) => {
         });
       }
     }
+
+    // NIST SC-28: decrypt v2-encrypted fields on the intake tree. Walks in
+    // place so downstream serializers see plaintext. Decrypt failures are
+    // surfaced as the sentinel string and audit-logged per-field. See
+    // src/lib/intakeCrypto.js for the mapping of table → rowId per column.
+    decryptIntakeTreeInPlace(intake, req.user.countyId);
 
     // Run eligibility calculations for the output packet (cached by intake version)
     let eligibility = null;
@@ -396,13 +407,26 @@ router.post("/intake/:id/review", requireVerifiedAuth, async (req, res) => {
       return res.status(404).json({ error: "Intake not found" });
     }
 
+    // NIST SC-28: `notes` is free-text caseworker commentary that may
+    // contain applicant PII or sensitive case details. Encrypt at rest
+    // with a v2 AAD bound to this review's id and the county.
+    const reviewId = randomUUID();
+    const encryptedNotes = notes
+      ? encryptFieldV2(notes, {
+          table: "intake_reviews",
+          column: "notes",
+          countyId: req.user.countyId,
+          rowId: reviewId,
+        })
+      : null;
     const review = await prisma.intakeReview.create({
       data: {
+        id: reviewId,
         intakeId: intake.id,
         caseworkerId: req.user.id,
         correctionsMade: correctionsMade || false,
         correctionType: correctionType || null,
-        notes: notes || null,
+        notes: encryptedNotes,
       },
     });
 
@@ -414,7 +438,11 @@ router.post("/intake/:id/review", requireVerifiedAuth, async (req, res) => {
       },
     });
 
-    // Detailed audit trail with before/after values for corrections
+    // Detailed audit trail with before/after values for corrections.
+    // NIST SC-28: `notes` is now encrypted at rest on IntakeReview —
+    // keep the audit-log detail consistent by recording only whether
+    // notes were supplied, not their plaintext. The encrypted value is
+    // retrievable via the review row.
     await logAuditEvent({
       type: EVENTS.CASEWORKER_REVIEW_CONFIRMED,
       actorType: ACTORS.CASEWORKER,
@@ -427,7 +455,8 @@ router.post("/intake/:id/review", requireVerifiedAuth, async (req, res) => {
         correctionsMade: correctionsMade || false,
         correctionType: correctionType || null,
         correctionDetails: correctionDetails || null,
-        notes: notes || null,
+        reviewId,
+        notesProvided: Boolean(notes),
         timestamp: new Date().toISOString(),
       },
     });
@@ -443,7 +472,8 @@ router.post("/intake/:id/review", requireVerifiedAuth, async (req, res) => {
         details: {
           correctionType,
           correctionDetails: correctionDetails || null,
-          notes,
+          reviewId,
+          notesProvided: Boolean(notes),
         },
       });
     }

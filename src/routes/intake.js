@@ -15,7 +15,11 @@ const { requireStaffPin } = require("../middleware/kioskAuth");
 const { sessionStore, SESSION_TTL_MS } = require("../services/sessionStore");
 const { withRetry } = require("../services/dbRetry");
 const { child } = require("../services/logger");
-const { encrypt: encryptField } = require("../lib/fieldCrypto");
+// v1 encryption — ConversationLog.content only. For new PII columns use
+// the v2 API (encrypt / safeDecrypt) which binds ciphertext to table /
+// column / countyId / rowId. See src/lib/fieldCrypto.js header.
+const { encryptV1: encryptConversation, encrypt: encryptFieldV2 } = require("../lib/fieldCrypto");
+const { randomUUID } = require("node:crypto");
 const {
   sanitizeForDisplay,
   validateDataBlockCount,
@@ -420,12 +424,24 @@ router.post("/start", requireStaffPin, staffPinLimiter, injectionGuardMiddleware
       { context: "intake.create", correlationId: req.correlationId }
     );
 
-    // Create minimal applicant record (display name only — no PII)
+    // Create minimal applicant record. `displayName` is the highest-PII
+    // surface outside ConversationLog — first name + last initial — so it
+    // is encrypted at rest via the v2 API (HKDF subkey + AAD bound to
+    // {table, column, countyId, rowId}). We generate the id client-side
+    // so the encrypt call happens in the same create() rather than a
+    // two-phase write that would leave plaintext at rest mid-flight.
+    const applicantId = randomUUID();
     await withRetry(
       () => prisma.applicant.create({
         data: {
+          id: applicantId,
           intakeId: intake.id,
-          displayName,
+          displayName: encryptFieldV2(displayName, {
+            table: "applicants",
+            column: "display_name",
+            countyId: intake.countyId,
+            rowId: applicantId,
+          }),
           languagePreference: language || "en",
         },
       }),
@@ -495,8 +511,8 @@ router.post("/start", requireStaffPin, staffPinLimiter, injectionGuardMiddleware
     await withRetry(
       () => prisma.conversationLog.createMany({
         data: [
-          { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: encryptField(`Intake session started — ${displayName} (${queueNumber})`, intake.id) },
-          { intakeId: intake.id, turnNumber: 1, role: "ASSISTANT", content: encryptField(welcomeResponse.displayMessage, intake.id) },
+          { intakeId: intake.id, turnNumber: 0, role: "SYSTEM", content: encryptConversation(`Intake session started — ${displayName} (${queueNumber})`, intake.id) },
+          { intakeId: intake.id, turnNumber: 1, role: "ASSISTANT", content: encryptConversation(welcomeResponse.displayMessage, intake.id) },
         ],
       }),
       { context: "conversationLog.create", correlationId: req.correlationId }
@@ -811,8 +827,8 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
     await withRetry(
       () => prisma.conversationLog.createMany({
         data: [
-          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: encryptField(sanitizeForDisplay(message), intake.id) },
-          { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: encryptField(aiResponse.displayMessage, intake.id) },
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2 - 1, role: "USER", content: encryptConversation(sanitizeForDisplay(message), intake.id) },
+          { intakeId: intake.id, turnNumber: session.turnNumber * 2, role: "ASSISTANT", content: encryptConversation(aiResponse.displayMessage, intake.id) },
         ],
       }),
       { context: "conversationLog.create", correlationId: req.correlationId }
