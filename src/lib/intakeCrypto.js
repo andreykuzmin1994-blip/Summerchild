@@ -11,12 +11,9 @@
  *   - Applicant.displayName                        → rowId = applicant.id
  *   - HouseholdMember.displayName                  → rowId = member.id
  *   - IncomeSource.householdMember.displayName     → rowId = nested member.id
+ *   - IncomeSource.employerOrPayerName             → rowId = income_source.id
+ *   - Deduction.calculationNotes                   → rowId = deduction.id
  *   - IntakeReview.notes                           → rowId = review.id
- *
- * Deferred (not yet encrypted):
- *   - IncomeSource.employerOrPayerName, Deduction.calculationNotes —
- *     each follows the same pattern; ship as a separate PR to keep the
- *     coverage expansion auditable one field at a time.
  */
 
 const { safeDecrypt, SENTINEL_DECRYPT_FAILED } = require("./fieldCrypto");
@@ -70,11 +67,22 @@ function decryptIntakeTreeInPlace(intake, countyId) {
     }
   }
 
-  // IncomeSource may be included with a nested householdMember; decrypt
-  // each nested displayName too. rowId is the member's id, not the
-  // income source's.
+  // IncomeSource: both a direct field (employerOrPayerName on the source
+  // row itself) and a nested include (householdMember.displayName). Each
+  // has its own rowId — the source's id for the first, the member's id
+  // for the second.
   if (Array.isArray(intake.incomeSources)) {
     for (const src of intake.incomeSources) {
+      if (src.employerOrPayerName !== null && src.employerOrPayerName !== undefined) {
+        src.employerOrPayerName = safeFieldDecrypt({
+          ciphertext: src.employerOrPayerName,
+          table: "income_sources",
+          column: "employer_or_payer_name",
+          countyId: aadCountyId,
+          rowId: src.id,
+          intakeId: intake.id,
+        });
+      }
       if (src.householdMember && src.householdMember.displayName !== null
           && src.householdMember.displayName !== undefined) {
         src.householdMember.displayName = safeFieldDecrypt({
@@ -83,6 +91,22 @@ function decryptIntakeTreeInPlace(intake, countyId) {
           column: "display_name",
           countyId: aadCountyId,
           rowId: src.householdMember.id,
+          intakeId: intake.id,
+        });
+      }
+    }
+  }
+
+  // Deduction.calculationNotes (array)
+  if (Array.isArray(intake.deductions)) {
+    for (const d of intake.deductions) {
+      if (d.calculationNotes !== null && d.calculationNotes !== undefined) {
+        d.calculationNotes = safeFieldDecrypt({
+          ciphertext: d.calculationNotes,
+          table: "deductions",
+          column: "calculation_notes",
+          countyId: aadCountyId,
+          rowId: d.id,
           intakeId: intake.id,
         });
       }

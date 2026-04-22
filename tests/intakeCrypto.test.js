@@ -16,6 +16,8 @@ const REVIEW_ID_2 = "44444444-4444-4444-8444-444444444444";
 
 const MEMBER_ID_1 = "55555555-5555-4555-8555-555555555555";
 const MEMBER_ID_2 = "66666666-6666-4666-8666-666666666666";
+const INCOME_SOURCE_ID = "77777777-7777-4777-8777-777777777777";
+const DEDUCTION_ID = "88888888-8888-4888-8888-888888888888";
 
 function encryptMemberName(name, memberId) {
   return encrypt(name, {
@@ -105,6 +107,56 @@ describe("decryptIntakeTreeInPlace", () => {
     decryptIntakeTreeInPlace(intake, COUNTY);
     expect(intake.incomeSources[0].householdMember.displayName).toBe("James R.");
     expect(intake.incomeSources[1].householdMember.displayName).toBe("Sofia T.");
+  });
+
+  it("decrypts IncomeSource.employerOrPayerName on the top-level include", () => {
+    const ct = encrypt("Acme Co.", {
+      table: "income_sources",
+      column: "employer_or_payer_name",
+      countyId: COUNTY,
+      rowId: INCOME_SOURCE_ID,
+    });
+    const intake = {
+      id: INTAKE_ID,
+      countyId: COUNTY,
+      incomeSources: [{ id: INCOME_SOURCE_ID, employerOrPayerName: ct }],
+    };
+    decryptIntakeTreeInPlace(intake, COUNTY);
+    expect(intake.incomeSources[0].employerOrPayerName).toBe("Acme Co.");
+  });
+
+  it("decrypts Deduction.calculationNotes in place", () => {
+    const ct = encrypt("20% earned-income deduction on $2,500 gross", {
+      table: "deductions",
+      column: "calculation_notes",
+      countyId: COUNTY,
+      rowId: DEDUCTION_ID,
+    });
+    const intake = {
+      id: INTAKE_ID,
+      countyId: COUNTY,
+      deductions: [{ id: DEDUCTION_ID, calculationNotes: ct }],
+    };
+    decryptIntakeTreeInPlace(intake, COUNTY);
+    expect(intake.deductions[0].calculationNotes)
+      .toBe("20% earned-income deduction on $2,500 gross");
+  });
+
+  it("AAD cross-column binding: employerOrPayerName ciphertext fails to decrypt as calculationNotes", () => {
+    // Same row id, different (table, column) — HKDF subkey + AAD both change.
+    const employerCt = encrypt("Acme Co.", {
+      table: "income_sources",
+      column: "employer_or_payer_name",
+      countyId: COUNTY,
+      rowId: DEDUCTION_ID,
+    });
+    const intake = {
+      id: INTAKE_ID,
+      countyId: COUNTY,
+      deductions: [{ id: DEDUCTION_ID, calculationNotes: employerCt }],
+    };
+    decryptIntakeTreeInPlace(intake, COUNTY);
+    expect(intake.deductions[0].calculationNotes).toBe(SENTINEL_DECRYPT_FAILED);
   });
 
   it("AAD cross-row binding: swapping ciphertext between members produces sentinels", () => {

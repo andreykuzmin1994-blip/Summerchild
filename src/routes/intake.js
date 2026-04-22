@@ -23,6 +23,7 @@ const {
   encrypt: encryptFieldV2,
   safeDecrypt: safeDecryptFieldV2,
 } = require("../lib/fieldCrypto");
+const { decryptIntakeTreeInPlace } = require("../lib/intakeCrypto");
 const { randomUUID } = require("node:crypto");
 const {
   sanitizeForDisplay,
@@ -168,12 +169,24 @@ async function persistExtractedData(intake, dataBlock) {
         if (match) memberId = match.id;
       }
 
+      // NIST SC-28: `employerOrPayerName` is free-form PII (an employer or
+      // payer name string). Generate the row id client-side so the encrypt
+      // happens in a single create() — no transient plaintext window.
+      const incomeSourceId = randomUUID();
       await prisma.incomeSource.create({
         data: {
+          id: incomeSourceId,
           intakeId,
           householdMemberId: memberId,
           incomeType,
-          employerOrPayerName: dataBlock.employer || null,
+          employerOrPayerName: dataBlock.employer
+            ? encryptFieldV2(dataBlock.employer, {
+                table: "income_sources",
+                column: "employer_or_payer_name",
+                countyId,
+                rowId: incomeSourceId,
+              })
+            : null,
           payFrequency,
           grossAmountPerPeriod: grossAmount,
           snapMonthlyAmount: snapMonthly,
@@ -307,6 +320,13 @@ async function generateDocumentChecklist(intakeId) {
   });
 
   if (!intake) return;
+
+  // NIST SC-28: the checklist descriptions interpolate
+  // `source.employerOrPayerName`, `source.householdMember.displayName`,
+  // and `intake.applicant.displayName` — all v2-encrypted at rest.
+  // Decrypt the loaded tree in place before building strings so the
+  // resulting document descriptions are readable.
+  decryptIntakeTreeInPlace(intake, intake.countyId);
 
   const docs = [];
 
@@ -1099,15 +1119,26 @@ router.post("/:id/complete", async (req, res) => {
       { context: "intake.update.complete", correlationId: req.correlationId }
     );
 
-    // Save deductions to DB
+    // Save deductions to DB. NIST SC-28: `calculationNotes` may reference
+    // applicant-specific PII (employer name, household member). Encrypt at
+    // rest with v2 AAD bound to the deduction row + county.
     for (const ded of eligibility.deductions.deductions) {
+      const deductionId = randomUUID();
       await withRetry(
         () => prisma.deduction.create({
           data: {
+            id: deductionId,
             intakeId: id,
             deductionType: ded.type,
             amount: ded.amount,
-            calculationNotes: ded.notes,
+            calculationNotes: ded.notes
+              ? encryptFieldV2(ded.notes, {
+                  table: "deductions",
+                  column: "calculation_notes",
+                  countyId: intake.countyId,
+                  rowId: deductionId,
+                })
+              : null,
           },
         }),
         { context: "deduction.create", correlationId: req.correlationId }
