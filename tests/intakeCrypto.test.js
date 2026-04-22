@@ -14,7 +14,24 @@ const APPLICANT_ID = "22222222-2222-4222-8222-222222222222";
 const REVIEW_ID_1 = "33333333-3333-4333-8333-333333333333";
 const REVIEW_ID_2 = "44444444-4444-4444-8444-444444444444";
 
-function buildIntake({ encryptedDisplay = true, reviewNotes = [] } = {}) {
+const MEMBER_ID_1 = "55555555-5555-4555-8555-555555555555";
+const MEMBER_ID_2 = "66666666-6666-4666-8666-666666666666";
+
+function encryptMemberName(name, memberId) {
+  return encrypt(name, {
+    table: "household_members",
+    column: "display_name",
+    countyId: COUNTY,
+    rowId: memberId,
+  });
+}
+
+function buildIntake({
+  encryptedDisplay = true,
+  reviewNotes = [],
+  householdMembers = [],
+  incomeSourcesWithMember = [],
+} = {}) {
   return {
     id: INTAKE_ID,
     countyId: COUNTY,
@@ -29,6 +46,16 @@ function buildIntake({ encryptedDisplay = true, reviewNotes = [] } = {}) {
           })
         : "Maria G.", // legacy plaintext row
     },
+    householdMembers: householdMembers.map((name, i) => {
+      const memberId = [MEMBER_ID_1, MEMBER_ID_2][i];
+      return { id: memberId, displayName: encryptMemberName(name, memberId) };
+    }),
+    incomeSources: incomeSourcesWithMember.map((name, i) => {
+      const memberId = [MEMBER_ID_1, MEMBER_ID_2][i];
+      return {
+        householdMember: { id: memberId, displayName: encryptMemberName(name, memberId) },
+      };
+    }),
     reviews: reviewNotes.map((notes, i) => {
       const rowId = [REVIEW_ID_1, REVIEW_ID_2][i];
       return {
@@ -60,6 +87,40 @@ describe("decryptIntakeTreeInPlace", () => {
     decryptIntakeTreeInPlace(intake, COUNTY);
     expect(intake.reviews[0].notes).toBe("first review note");
     expect(intake.reviews[1].notes).toBe("second note with more detail");
+  });
+
+  it("decrypts HouseholdMember.displayName on the top-level include", () => {
+    const intake = buildIntake({
+      householdMembers: ["James R.", "Sofia T."],
+    });
+    decryptIntakeTreeInPlace(intake, COUNTY);
+    expect(intake.householdMembers[0].displayName).toBe("James R.");
+    expect(intake.householdMembers[1].displayName).toBe("Sofia T.");
+  });
+
+  it("decrypts the nested IncomeSource.householdMember.displayName", () => {
+    const intake = buildIntake({
+      incomeSourcesWithMember: ["James R.", "Sofia T."],
+    });
+    decryptIntakeTreeInPlace(intake, COUNTY);
+    expect(intake.incomeSources[0].householdMember.displayName).toBe("James R.");
+    expect(intake.incomeSources[1].householdMember.displayName).toBe("Sofia T.");
+  });
+
+  it("AAD cross-row binding: swapping ciphertext between members produces sentinels", () => {
+    const a = encryptMemberName("James R.", MEMBER_ID_1);
+    const b = encryptMemberName("Sofia T.", MEMBER_ID_2);
+    const intake = {
+      id: INTAKE_ID,
+      countyId: COUNTY,
+      householdMembers: [
+        { id: MEMBER_ID_1, displayName: b }, // swapped — should fail auth tag
+        { id: MEMBER_ID_2, displayName: a },
+      ],
+    };
+    decryptIntakeTreeInPlace(intake, COUNTY);
+    expect(intake.householdMembers[0].displayName).toBe(SENTINEL_DECRYPT_FAILED);
+    expect(intake.householdMembers[1].displayName).toBe(SENTINEL_DECRYPT_FAILED);
   });
 
   it("passes through legacy plaintext rows unchanged", () => {

@@ -8,15 +8,15 @@
  * via safeDecryptV1.
  *
  * Currently covers:
- *   - Applicant.displayName       → rowId = applicant.id
- *   - IntakeReview.notes          → rowId = review.id
+ *   - Applicant.displayName                        → rowId = applicant.id
+ *   - HouseholdMember.displayName                  → rowId = member.id
+ *   - IncomeSource.householdMember.displayName     → rowId = nested member.id
+ *   - IntakeReview.notes                           → rowId = review.id
  *
  * Deferred (not yet encrypted):
- *   - HouseholdMember.displayName — breaks the `m.displayName.toLowerCase()`
- *     compare at src/routes/intake.js:131; encrypt only after the compare
- *     logic is migrated.
- *   - IncomeSource.employerOrPayerName, Deduction.calculationNotes — to
- *     follow once the read-path walker is in production.
+ *   - IncomeSource.employerOrPayerName, Deduction.calculationNotes —
+ *     each follows the same pattern; ship as a separate PR to keep the
+ *     coverage expansion auditable one field at a time.
  */
 
 const { safeDecrypt, SENTINEL_DECRYPT_FAILED } = require("./fieldCrypto");
@@ -52,6 +52,41 @@ function decryptIntakeTreeInPlace(intake, countyId) {
       rowId: intake.applicant.id,
       intakeId: intake.id,
     });
+  }
+
+  // HouseholdMember.displayName (array, top-level include)
+  if (Array.isArray(intake.householdMembers)) {
+    for (const m of intake.householdMembers) {
+      if (m.displayName !== null && m.displayName !== undefined) {
+        m.displayName = safeFieldDecrypt({
+          ciphertext: m.displayName,
+          table: "household_members",
+          column: "display_name",
+          countyId: aadCountyId,
+          rowId: m.id,
+          intakeId: intake.id,
+        });
+      }
+    }
+  }
+
+  // IncomeSource may be included with a nested householdMember; decrypt
+  // each nested displayName too. rowId is the member's id, not the
+  // income source's.
+  if (Array.isArray(intake.incomeSources)) {
+    for (const src of intake.incomeSources) {
+      if (src.householdMember && src.householdMember.displayName !== null
+          && src.householdMember.displayName !== undefined) {
+        src.householdMember.displayName = safeFieldDecrypt({
+          ciphertext: src.householdMember.displayName,
+          table: "household_members",
+          column: "display_name",
+          countyId: aadCountyId,
+          rowId: src.householdMember.id,
+          intakeId: intake.id,
+        });
+      }
+    }
   }
 
   // IntakeReview.notes (array)

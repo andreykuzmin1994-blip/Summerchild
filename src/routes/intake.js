@@ -18,7 +18,11 @@ const { child } = require("../services/logger");
 // v1 encryption — ConversationLog.content only. For new PII columns use
 // the v2 API (encrypt / safeDecrypt) which binds ciphertext to table /
 // column / countyId / rowId. See src/lib/fieldCrypto.js header.
-const { encryptV1: encryptConversation, encrypt: encryptFieldV2 } = require("../lib/fieldCrypto");
+const {
+  encryptV1: encryptConversation,
+  encrypt: encryptFieldV2,
+  safeDecrypt: safeDecryptFieldV2,
+} = require("../lib/fieldCrypto");
 const { randomUUID } = require("node:crypto");
 const {
   sanitizeForDisplay,
@@ -59,7 +63,9 @@ function generateQueueNumber() {
  * Persist a validated extracted data block to the database.
  * Maps AI-extracted field names to Prisma model creates/upserts.
  */
-async function persistExtractedData(intakeId, dataBlock) {
+async function persistExtractedData(intake, dataBlock) {
+  const intakeId = intake.id;
+  const countyId = intake.countyId;
   const field = dataBlock.field;
 
   switch (field) {
@@ -90,10 +96,20 @@ async function persistExtractedData(intakeId, dataBlock) {
         : true;
       const inSnapHousehold = purchasesAndPrepares || isSpouseOrYoungChild;
 
+      // NIST SC-28: `displayName` is free-form PII ("Member 1", "James R.").
+      // Generate the row id client-side so we can encrypt in a single create
+      // — no transient plaintext window from a create-then-update cycle.
+      const memberId = randomUUID();
       await prisma.householdMember.create({
         data: {
+          id: memberId,
           intakeId,
-          displayName: dataBlock.display_name || `Member`,
+          displayName: encryptFieldV2(dataBlock.display_name || "Member", {
+            table: "household_members",
+            column: "display_name",
+            countyId,
+            rowId: memberId,
+          }),
           ageRange: dataBlock.age_range || null,
           relationshipToApplicant: dataBlock.relationship || "",
           purchasesAndPreparesTogether: purchasesAndPrepares,
@@ -127,13 +143,28 @@ async function persistExtractedData(intakeId, dataBlock) {
         snapMonthly = Math.round(grossAmount * multiplier * 100) / 100;
       }
 
-      // Find the household member this income belongs to
+      // Find the household member this income belongs to.
+      // NIST SC-28 interaction: `HouseholdMember.displayName` is now v2-
+      // encrypted, so we cannot compare ciphertext with `.toLowerCase()`.
+      // Decrypt each candidate in memory (bounded by household size, ~5)
+      // before the case-insensitive match.
       let memberId = null;
       if (dataBlock.member && dataBlock.member !== "applicant") {
         const members = await prisma.householdMember.findMany({ where: { intakeId } });
-        const match = members.find((m) =>
-          m.displayName.toLowerCase() === (dataBlock.member || "").toLowerCase()
-        );
+        const needle = (dataBlock.member || "").toLowerCase();
+        const match = members.find((m) => {
+          const plain = safeDecryptFieldV2(
+            m.displayName,
+            {
+              table: "household_members",
+              column: "display_name",
+              countyId,
+              rowId: m.id,
+            },
+            () => { /* onFailure hook left silent here — read path has its own audit */ }
+          );
+          return typeof plain === "string" && plain.toLowerCase() === needle;
+        });
         if (match) memberId = match.id;
       }
 
@@ -805,7 +836,7 @@ router.post("/message", aiMessageLimiter, injectionGuardMiddleware, async (req, 
       validatedData.push(cleanedBlock);
       try {
         await withRetry(
-          () => persistExtractedData(intake.id, cleanedBlock),
+          () => persistExtractedData(intake, cleanedBlock),
           { context: "persistExtractedData", correlationId: req.correlationId }
         );
       } catch (persistErr) {
