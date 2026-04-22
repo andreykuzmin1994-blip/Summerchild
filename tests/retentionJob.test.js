@@ -4,6 +4,7 @@ const {
   runConversationLogPolicy,
   runAbandonedIntakePolicy,
   runCaseworkerPurgePolicy,
+  runIntakeTimeoutPolicy,
   purgeOneIntakeInTx,
   CASEWORKER_PASSWORD_TOMBSTONE,
   CASEWORKER_NAME_TOMBSTONE,
@@ -13,6 +14,7 @@ const {
   MIN_RETENTION_DAYS,
   MIN_INTAKE_RETENTION_DAYS,
   MIN_CASEWORKER_RETENTION_DAYS,
+  MIN_INTAKE_TIMEOUT_DAYS,
 } = require("../src/services/retentionJob");
 
 /**
@@ -223,6 +225,7 @@ describe("retentionScheduler.runOnce", () => {
     conversationLogIntakeIds = [],
     abandonedIntakes = [],  // [{id, countyId}, ...]
     caseworkerCandidates = [], // [{id, countyId}, ...]
+    timeoutCandidates = [], // [{id, countyId}, ...]
   } = {}) {
     const auditRows = [];
 
@@ -252,10 +255,16 @@ describe("retentionScheduler.runOnce", () => {
               const n = Math.min(abandonedIntakes.length, args.take);
               return abandonedIntakes.slice(0, n);
             }
+            if (status === "IN_PROGRESS") {
+              // intake timeout query
+              const n = Math.min(timeoutCandidates.length, args.take);
+              return timeoutCandidates.slice(0, n);
+            }
             // conversationLog query (status: 'REVIEWED')
             const n = Math.min(conversationLogIntakeIds.length, args.take);
             return conversationLogIntakeIds.slice(0, n).map((id) => ({ id }));
           }),
+          updateMany: vi.fn(async () => ({ count: timeoutCandidates.length })),
           delete: vi.fn(async (args) => ({ id: args.where.id })),
         },
         conversationLog: {
@@ -294,6 +303,7 @@ describe("retentionScheduler.runOnce", () => {
     conversationLogDays: 90,
     abandonedIntakeDays: 90,
     caseworkerPurgeDays: 1095,
+    intakeTimeoutDays: 7,
   };
 
   it("returns {ran:false, reason:'disabled'} when enabled=false", async () => {
@@ -342,11 +352,12 @@ describe("retentionScheduler.runOnce", () => {
     expect(prisma.conversationLog.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("happy path emits STARTED, three POLICY_EXECUTED rows, and COMPLETED", async () => {
+  it("happy path emits STARTED, four POLICY_EXECUTED rows in order, and COMPLETED", async () => {
     const { prisma, auditRows } = fakeTxPrisma({
       conversationLogIntakeIds: ["i1", "i2"],
       abandonedIntakes: [],
       caseworkerCandidates: [],
+      timeoutCandidates: [],
     });
     const result = await runOnce({
       prisma,
@@ -356,16 +367,41 @@ describe("retentionScheduler.runOnce", () => {
     const types = auditRows.map((r) => r.eventType);
     expect(types).toContain("DATA_RETENTION_STARTED");
     expect(types).toContain("DATA_RETENTION_COMPLETED");
-    // One POLICY_EXECUTED per policy (3 policies run).
+    // One POLICY_EXECUTED per policy — intakeTimeout runs FIRST so
+    // transitioned rows feed abandonedIntake in the same cycle.
     const policyRows = auditRows.filter((r) => r.eventType === "DATA_RETENTION_POLICY_EXECUTED");
-    expect(policyRows).toHaveLength(3);
+    expect(policyRows).toHaveLength(4);
     const policies = policyRows.map((r) => r.details.policy);
-    expect(policies).toEqual(["conversationLog", "abandonedIntake", "caseworkerPurge"]);
-    // All rows carry the system actor.
+    expect(policies).toEqual([
+      "intakeTimeout",
+      "conversationLog",
+      "abandonedIntake",
+      "caseworkerPurge",
+    ]);
     for (const row of policyRows) {
       expect(row.actorType).toBe("SYSTEM");
       expect(row.actorId).toBe("system:retention-job@v1");
     }
+  });
+
+  it("emits per-intake DATA_RETENTION_INTAKE_TIMED_OUT events with countyId", async () => {
+    const { prisma, auditRows } = fakeTxPrisma({
+      timeoutCandidates: [
+        { id: "idle-1", countyId: "county-A" },
+        { id: "idle-2", countyId: "county-B" },
+      ],
+    });
+    await runOnce({ prisma, config: { ...FULL_CONFIG, dryRun: false } });
+    const rows = auditRows.filter((r) => r.eventType === "DATA_RETENTION_INTAKE_TIMED_OUT");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.details.countyId).sort()).toEqual(["county-A", "county-B"]);
+    // Must call updateMany with the status guard clause.
+    expect(prisma.intake.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "IN_PROGRESS" }),
+        data: { status: "TIMED_OUT" },
+      })
+    );
   });
 
   it("emits per-intake DATA_RETENTION_INTAKE_PURGED with countyId", async () => {
@@ -426,11 +462,11 @@ describe("retentionScheduler.runOnce", () => {
     await runOnce({ prisma, config: { ...FULL_CONFIG, maxRows: 10, dryRun: false } });
     const types = auditRows.map((r) => r.eventType);
     expect(types).toContain("DATA_RETENTION_CIRCUIT_BREAKER_TRIPPED");
-    // The breaker fires on conversationLog, but the other two POLICY_EXECUTED rows
-    // should still be emitted.
+    // The breaker fires on conversationLog, but the other three POLICY_EXECUTED
+    // rows should still be emitted (intakeTimeout runs first and succeeds).
     const policyRows = auditRows.filter((r) => r.eventType === "DATA_RETENTION_POLICY_EXECUTED");
     const policies = policyRows.map((r) => r.details.policy);
-    expect(policies).toEqual(["abandonedIntake", "caseworkerPurge"]);
+    expect(policies).toEqual(["intakeTimeout", "abandonedIntake", "caseworkerPurge"]);
   });
 });
 
@@ -760,6 +796,127 @@ describe("runCaseworkerPurgePolicy — dry-run and happy path", () => {
     });
     expect(calls.update[0].data.email).toBe("purged-a@invalid.local");
     expect(calls.update[1].data.email).toBe("purged-b@invalid.local");
+  });
+});
+
+// ----------------------------------------------------------------------
+// Intake timeout state-transition policy
+// ----------------------------------------------------------------------
+
+function fakeTimeoutPrisma({ candidates = [], updatedCount } = {}) {
+  const calls = { findMany: [], updateMany: [] };
+  const client = {
+    intake: {
+      findMany: vi.fn(async (args) => {
+        calls.findMany.push(args);
+        const n = Math.min(candidates.length, args.take);
+        return candidates.slice(0, n);
+      }),
+      updateMany: vi.fn(async (args) => {
+        calls.updateMany.push(args);
+        return { count: updatedCount ?? candidates.length };
+      }),
+    },
+  };
+  return { client, calls };
+}
+
+describe("runIntakeTimeoutPolicy — config validation", () => {
+  it("rejects retentionDays below MIN_INTAKE_TIMEOUT_DAYS (1)", async () => {
+    const { client } = fakeTimeoutPrisma();
+    await expect(
+      runIntakeTimeoutPolicy({ prisma: client, retentionDays: 0, dryRun: true })
+    ).rejects.toBeInstanceOf(RetentionConfigError);
+  });
+
+  it("accepts exactly MIN_INTAKE_TIMEOUT_DAYS (1)", async () => {
+    const { client } = fakeTimeoutPrisma();
+    await expect(
+      runIntakeTimeoutPolicy({
+        prisma: client,
+        retentionDays: MIN_INTAKE_TIMEOUT_DAYS,
+        dryRun: true,
+      })
+    ).resolves.toMatchObject({ policy: "intakeTimeout" });
+  });
+});
+
+describe("runIntakeTimeoutPolicy — query shape", () => {
+  it("filters status=IN_PROGRESS AND updatedAt<cutoff AND no caseworker AND no reviews", async () => {
+    const { client, calls } = fakeTimeoutPrisma();
+    await runIntakeTimeoutPolicy({
+      prisma: client,
+      clock: fixedClock("2026-04-21T00:00:00.000Z"),
+      retentionDays: 7,
+      dryRun: true,
+    });
+    const where = calls.findMany[0].where;
+    expect(where.status).toBe("IN_PROGRESS");
+    expect(where.updatedAt).toEqual({ lt: expect.any(Date) });
+    expect(where.caseworkerId).toBeNull();
+    expect(where.reviews).toEqual({ none: {} });
+    // 2026-04-21 minus 7 days = 2026-04-14
+    expect(where.updatedAt.lt.toISOString().slice(0, 10)).toBe("2026-04-14");
+  });
+});
+
+describe("runIntakeTimeoutPolicy — dry-run and happy path", () => {
+  it("dry-run does not mutate", async () => {
+    const { client } = fakeTimeoutPrisma({
+      candidates: [{ id: "a", countyId: "c" }],
+    });
+    const result = await runIntakeTimeoutPolicy({
+      prisma: client,
+      clock: fixedClock("2026-04-21T00:00:00.000Z"),
+      retentionDays: 7,
+      dryRun: true,
+    });
+    expect(client.intake.updateMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ candidates: 1, transitioned: 0, dryRun: true });
+  });
+
+  it("transitions candidates from IN_PROGRESS to TIMED_OUT with a guard clause", async () => {
+    const { client, calls } = fakeTimeoutPrisma({
+      candidates: [{ id: "i1", countyId: "county-A" }, { id: "i2", countyId: "county-B" }],
+      updatedCount: 2,
+    });
+    const result = await runIntakeTimeoutPolicy({
+      prisma: client,
+      clock: fixedClock("2026-04-21T00:00:00.000Z"),
+      retentionDays: 7,
+      dryRun: false,
+    });
+    expect(calls.updateMany[0]).toEqual({
+      // Guard: re-check status on the update so a concurrent caseworker
+      // action between find and update doesn't clobber a legitimate row.
+      where: { id: { in: ["i1", "i2"] }, status: "IN_PROGRESS" },
+      data: { status: "TIMED_OUT" },
+    });
+    expect(result).toMatchObject({
+      policy: "intakeTimeout",
+      candidates: 2,
+      transitioned: 2,
+      dryRun: false,
+    });
+    expect(result.perIntake).toEqual([
+      { id: "i1", countyId: "county-A" },
+      { id: "i2", countyId: "county-B" },
+    ]);
+  });
+
+  it("circuit breaker trips when candidates exceed maxRows", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ id: `i-${i}`, countyId: "c" }));
+    const { client } = fakeTimeoutPrisma({ candidates: many });
+    await expect(
+      runIntakeTimeoutPolicy({
+        prisma: client,
+        clock: fixedClock("2026-04-21T00:00:00.000Z"),
+        retentionDays: 7,
+        maxRows: 10,
+        dryRun: false,
+      })
+    ).rejects.toBeInstanceOf(RetentionCircuitBreakerError);
+    expect(client.intake.updateMany).not.toHaveBeenCalled();
   });
 });
 

@@ -130,6 +130,10 @@ const EVENTS = {
   DATA_RETENTION_CLOCK_SKEW_DETECTED: "DATA_RETENTION_CLOCK_SKEW_DETECTED",
   // NIST AU-11: per-record purge evidence. Emitted *before* the destructive
   // transaction so the candidate list survives even if the purge fails.
+  // NIST AU-2: state transition evidence. Emitted when a stale IN_PROGRESS
+  // intake is moved to TIMED_OUT by runIntakeTimeoutPolicy. This is NOT a
+  // deletion — it makes the row eligible for runAbandonedIntakePolicy.
+  DATA_RETENTION_INTAKE_TIMED_OUT: "DATA_RETENTION_INTAKE_TIMED_OUT",
   DATA_RETENTION_INTAKE_PURGED: "DATA_RETENTION_INTAKE_PURGED",
   DATA_RETENTION_CASEWORKER_PURGE_CANDIDATES: "DATA_RETENTION_CASEWORKER_PURGE_CANDIDATES",
   DATA_RETENTION_CASEWORKER_PURGED: "DATA_RETENTION_CASEWORKER_PURGED",

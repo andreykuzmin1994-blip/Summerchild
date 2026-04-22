@@ -8,11 +8,19 @@
  *   - ConversationLog cleanup (v1): delete conversation rows whose parent
  *     intake is REVIEWED and whose *last* review (IntakeReview.reviewedAt)
  *     is older than CONVERSATION_LOG_RETENTION_DAYS.
+ *   - Intake timeout transition (v2): mark IN_PROGRESS intakes whose
+ *     `updatedAt` is older than INTAKE_TIMEOUT_DAYS as TIMED_OUT. This is
+ *     not a deletion — it's a state transition that FEEDS the abandoned
+ *     intake purge. Running it earlier in the same cycle lets genuinely
+ *     dead sessions graduate to TIMED_OUT and become eligible for purge
+ *     without two cycles of lag. The two rules together mean no data is
+ *     deleted on the basis of "stuck IN_PROGRESS" alone — the transition
+ *     is explicit and audited.
  *   - Abandoned intake purge (v2): hard-delete intakes in terminal-abandoned
  *     states (ABANDONED or TIMED_OUT) older than INTAKE_ABANDONED_RETENTION_DAYS,
  *     with no caseworker touch and no IntakeReview. IN_PROGRESS is
  *     intentionally EXCLUDED — "stuck" is not "abandoned"; state transitions
- *     should be a separate cron.
+ *     are handled by runIntakeTimeoutPolicy above.
  *   - Caseworker purge (v2): soft-delete (AU-10 non-repudiation). Overwrite
  *     name/email/password with non-reversible tombstones, set purgedAt.
  *     Preserves IntakeReview.caseworkerId FK integrity (the column is
@@ -195,11 +203,117 @@ async function runConversationLogPolicy({
 }
 
 // ---------------------------------------------------------------------
+// Intake timeout state transition (v2)
+// ---------------------------------------------------------------------
+
+/**
+ * Find IN_PROGRESS intakes that have been idle long enough to transition
+ * to TIMED_OUT.
+ *
+ * Rule:
+ *   - status = IN_PROGRESS
+ *   - updatedAt < cutoff  (NOT createdAt — we care about idle time, not age)
+ *   - caseworkerId IS NULL (a caseworker is actively involved — don't touch)
+ *   - no IntakeReview exists (defensive — an IN_PROGRESS with a review
+ *     would itself be a data-integrity bug, but we still refuse to transition)
+ */
+async function findIntakeTimeoutCandidates({ prisma, cutoff, limit }) {
+  return prisma.intake.findMany({
+    where: {
+      status: "IN_PROGRESS",
+      updatedAt: { lt: cutoff },
+      caseworkerId: null,
+      reviews: { none: {} },
+    },
+    select: { id: true, countyId: true },
+    take: limit,
+    orderBy: { updatedAt: "asc" },
+  });
+}
+
+/**
+ * Transition idle IN_PROGRESS intakes to TIMED_OUT.
+ *
+ * Unlike the deletion policies, this one mutates (doesn't delete). The
+ * transitioned rows become eligible for runAbandonedIntakePolicy on a
+ * later cycle (or the same cycle, since this runs first in the scheduler).
+ *
+ * Returns { policy, cutoff, candidates, transitioned, perIntake, dryRun }.
+ * `perIntake` carries { id, countyId } for per-intake audit evidence.
+ */
+async function runIntakeTimeoutPolicy({
+  prisma,
+  clock = Date,
+  retentionDays,
+  maxRows = DEFAULT_MAX_ROWS,
+  dryRun = true,
+  correlationId,
+}) {
+  if (!Number.isInteger(retentionDays) || retentionDays < MIN_INTAKE_TIMEOUT_DAYS) {
+    throw new RetentionConfigError(
+      `intakeTimeout.retentionDays must be an integer ≥ ${MIN_INTAKE_TIMEOUT_DAYS} (got ${retentionDays})`
+    );
+  }
+  if (!Number.isInteger(maxRows) || maxRows <= 0) {
+    throw new RetentionConfigError(`intakeTimeout.maxRows must be a positive integer (got ${maxRows})`);
+  }
+
+  const now = new Date(clock.now());
+  const cutoff = new Date(now.getTime() - retentionDays * DAY_MS);
+
+  const candidates = await withRetry(
+    () => findIntakeTimeoutCandidates({ prisma, cutoff, limit: maxRows + 1 }),
+    { context: "retention:intakeTimeout:find", correlationId }
+  );
+  if (candidates.length > maxRows) {
+    throw new RetentionCircuitBreakerError("intakeTimeout", candidates.length, maxRows);
+  }
+  if (dryRun || candidates.length === 0) {
+    return {
+      policy: "intakeTimeout",
+      cutoff: cutoff.toISOString(),
+      retentionDays,
+      candidates: candidates.length,
+      transitioned: 0,
+      perIntake: [],
+      dryRun,
+    };
+  }
+
+  const ids = candidates.map((c) => c.id);
+  const { count } = await withRetry(
+    () => prisma.intake.updateMany({
+      where: { id: { in: ids }, status: "IN_PROGRESS" },
+      data: { status: "TIMED_OUT" },
+    }),
+    { context: "retention:intakeTimeout:updateMany", correlationId }
+  );
+
+  log.info("Intake timeout transition complete", {
+    candidates: candidates.length,
+    transitioned: count,
+    cutoff: cutoff.toISOString(),
+    correlationId,
+  });
+
+  return {
+    policy: "intakeTimeout",
+    cutoff: cutoff.toISOString(),
+    retentionDays,
+    candidates: candidates.length,
+    transitioned: count,
+    perIntake: candidates,
+    dryRun: false,
+  };
+}
+
+// ---------------------------------------------------------------------
 // Abandoned intake purge (v2)
 // ---------------------------------------------------------------------
 
 const MIN_INTAKE_RETENTION_DAYS = 30; // floor — guards against clock skew / misconfig
 const MIN_CASEWORKER_RETENTION_DAYS = 730; // NIST IA-4 account identifier reuse floor
+const MIN_INTAKE_TIMEOUT_DAYS = 1; // floor — prevent sub-day timeouts racing live sessions
 
 /**
  * Find abandoned intakes eligible for purge.
@@ -466,6 +580,8 @@ module.exports = {
   purgeOneIntakeInTx,
   runCaseworkerPurgePolicy,
   findCaseworkerPurgeCandidates,
+  runIntakeTimeoutPolicy,
+  findIntakeTimeoutCandidates,
   CASEWORKER_PASSWORD_TOMBSTONE,
   CASEWORKER_NAME_TOMBSTONE,
   purgedEmailFor,
@@ -475,4 +591,5 @@ module.exports = {
   MIN_RETENTION_DAYS,
   MIN_INTAKE_RETENTION_DAYS,
   MIN_CASEWORKER_RETENTION_DAYS,
+  MIN_INTAKE_TIMEOUT_DAYS,
 };

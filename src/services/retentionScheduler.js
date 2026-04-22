@@ -37,6 +37,7 @@ const {
   runConversationLogPolicy,
   runAbandonedIntakePolicy,
   runCaseworkerPurgePolicy,
+  runIntakeTimeoutPolicy,
   RetentionCircuitBreakerError,
 } = require("./retentionJob");
 const { EVENTS, ACTORS } = require("./auditLogger");
@@ -185,7 +186,41 @@ async function runOnce({ prisma, clock = Date, config }) {
     // prevent the other policies from running. A BLOCKER failure (circuit
     // breaker, DB write error) still aborts the *containing* tx via throw;
     // see the outer catch.
+    //
+    // Order matters: intakeTimeout runs FIRST so stale IN_PROGRESS rows
+    // become TIMED_OUT and are eligible for abandonedIntake in the same
+    // cycle. Both run before conversationLog/caseworker (which are
+    // independent of intake state transitions).
     const policyDefs = [
+      {
+        name: "intakeTimeout",
+        run: async () => {
+          const result = await runIntakeTimeoutPolicy({
+            prisma: tx, clock,
+            retentionDays: config.intakeTimeoutDays,
+            maxRows: config.maxRows,
+            dryRun: config.dryRun,
+            correlationId,
+          });
+          // Per-intake audit row — preserves countyId for county-scoped
+          // evidence queries (CLAUDE.md non-negotiable).
+          for (const i of result.perIntake) {
+            await writeRetentionAuditRowOrThrow(tx, {
+              type: EVENTS.DATA_RETENTION_INTAKE_TIMED_OUT,
+              details: { correlationId, intakeId: i.id, countyId: i.countyId },
+            });
+          }
+          return result;
+        },
+        auditDetails: (r) => ({
+          policy: r.policy,
+          cutoff: r.cutoff,
+          retentionDays: r.retentionDays,
+          candidates: r.candidates,
+          transitioned: r.transitioned,
+          dryRun: r.dryRun,
+        }),
+      },
       {
         name: "conversationLog",
         run: () => runConversationLogPolicy({
@@ -343,6 +378,7 @@ class RetentionScheduler {
       maxRows: parseIntEnv(process.env.RETENTION_MAX_ROWS_PER_RUN, 5000),
       conversationLogDays: parseIntEnv(process.env.CONVERSATION_LOG_RETENTION_DAYS, 90),
       abandonedIntakeDays: parseIntEnv(process.env.INTAKE_ABANDONED_RETENTION_DAYS, 90),
+      intakeTimeoutDays: parseIntEnv(process.env.INTAKE_TIMEOUT_DAYS, 7),
       // NIST IA-4 floor (730d) enforced by runCaseworkerPurgePolicy itself.
       caseworkerPurgeDays: parseIntEnv(process.env.CASEWORKER_PURGE_RETENTION_DAYS, 1095),
       cronExpression: process.env.RETENTION_CRON_EXPRESSION || DEFAULT_CRON_EXPRESSION,
